@@ -19,10 +19,15 @@ WEB_ROOT = ROOT / "web"
 CONFIG_PATH = Path.home() / ".jcode" / "config.toml"
 WORKBENCH_STATE_PATH = Path.home() / ".jcode" / "workbench.json"
 DEVICES_PATH = Path.home() / ".jcode" / "devices.json"
+SESSIONS_PATH = Path.home() / ".jcode" / "sessions"
+ACTIVE_PIDS_PATH = Path.home() / ".jcode" / "active_pids"
+TELEMETRY_ACTIVE_SESSIONS_PATH = Path.home() / ".jcode" / "telemetry_active_sessions"
+LOGS_PATH = Path.home() / ".jcode" / "logs"
 DEFAULT_WORKDIR = Path.home() / "Documents" / "Playground"
 JCODE_BIN = Path.home() / ".cargo" / "bin" / "jcode.exe"
 JCODE_API_BIN = Path.home() / ".cargo" / "bin" / "jcode-api.cmd"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+WHITESPACE_RE = re.compile(r"\s+")
 
 
 def read_file_text(path: Path) -> str:
@@ -48,11 +53,19 @@ def normalize_workspace(path_text: str) -> str:
 def read_workbench_state() -> dict[str, Any]:
     text = read_file_text(WORKBENCH_STATE_PATH)
     if not text.strip():
-        return {"workspaces": [], "selected_workspace": str(DEFAULT_WORKDIR)}
+        return {
+            "workspaces": [],
+            "selected_workspace": str(DEFAULT_WORKDIR),
+            "last_validation": None,
+        }
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        return {"workspaces": [], "selected_workspace": str(DEFAULT_WORKDIR)}
+        return {
+            "workspaces": [],
+            "selected_workspace": str(DEFAULT_WORKDIR),
+            "last_validation": None,
+        }
     workspaces = []
     for item in data.get("workspaces") or []:
         path = normalize_workspace(item.get("path") if isinstance(item, dict) else item)
@@ -73,7 +86,11 @@ def read_workbench_state() -> dict[str, Any]:
         seen.add(key)
         unique.append(item)
     selected = normalize_workspace(data.get("selected_workspace") or str(DEFAULT_WORKDIR))
-    return {"workspaces": unique, "selected_workspace": selected}
+    return {
+        "workspaces": unique,
+        "selected_workspace": selected,
+        "last_validation": data.get("last_validation"),
+    }
 
 
 def write_workbench_state(state: dict[str, Any]) -> None:
@@ -308,6 +325,273 @@ def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text or "")
 
 
+def squash_text(text: str, limit: int = 140) -> str:
+    compact = WHITESPACE_RE.sub(" ", strip_ansi(text or "")).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "..."
+
+
+def iso_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def parse_iso8601(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def format_relative_time(value: str | None) -> str:
+    when = parse_iso8601(value)
+    if when is None:
+        return ""
+    now = dt.datetime.now(dt.timezone.utc)
+    seconds = int((now - when).total_seconds())
+    if seconds < 0:
+        seconds = 0
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+def normalize_status(value: Any) -> tuple[str, str]:
+    if isinstance(value, str):
+        return value, ""
+    if isinstance(value, dict) and value:
+        key = next(iter(value.keys()))
+        detail = value.get(key)
+        if isinstance(detail, dict):
+            message = str(detail.get("message") or json.dumps(detail, ensure_ascii=False))
+        else:
+            message = str(detail or "")
+        return key, message
+    return "Unknown", ""
+
+
+def powershell_json(command: str) -> Any:
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "PowerShell command failed")
+    text = completed.stdout.strip()
+    if not text:
+        return None
+    return json.loads(text)
+
+
+def read_active_pid_map() -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    if not ACTIVE_PIDS_PATH.exists():
+        return mapping
+    for path in ACTIVE_PIDS_PATH.iterdir():
+        if not path.is_file():
+            continue
+        raw = read_file_text(path).strip()
+        try:
+            mapping[path.name] = int(raw)
+        except ValueError:
+            continue
+    return mapping
+
+
+def read_latest_assistant_preview(session_id: str) -> str:
+    journal_path = SESSIONS_PATH / f"{session_id}.journal.jsonl"
+    if not journal_path.exists():
+        return ""
+    lines = journal_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        for message in reversed(event.get("append_messages") or []):
+            if message.get("role") != "assistant":
+                continue
+            text_parts = []
+            for part in message.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(str(part.get("text") or ""))
+            preview = squash_text(" ".join(text_parts))
+            if preview:
+                return preview
+    return ""
+
+
+def read_session_records(limit: int = 10) -> list[dict[str, Any]]:
+    records = []
+    active_pids = read_active_pid_map()
+    if not SESSIONS_PATH.exists():
+        return records
+    for path in SESSIONS_PATH.glob("session_*.json"):
+        if path.name.endswith(".journal.jsonl"):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        messages = data.get("messages") or []
+        status_text, status_detail = normalize_status(data.get("status"))
+        session_id = str(data.get("id") or path.stem)
+        working_dir = str(data.get("working_dir") or "")
+        pid = active_pids.get(session_id, data.get("last_pid"))
+        assistant_preview = read_latest_assistant_preview(session_id)
+        records.append(
+            {
+                "session_id": session_id,
+                "short_name": data.get("short_name") or session_id,
+                "status": data.get("status") or "Unknown",
+                "status_text": status_text,
+                "status_detail": status_detail,
+                "provider_key": data.get("provider_key") or "",
+                "model": data.get("model") or "",
+                "working_dir": working_dir,
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+                "last_active_at": data.get("last_active_at"),
+                "relative_last_active": format_relative_time(data.get("last_active_at") or data.get("updated_at")),
+                "last_pid": pid,
+                "message_count": len(messages),
+                "saved": bool(data.get("saved")),
+                "is_debug": bool(data.get("is_debug")),
+                "env_snapshot_count": len(data.get("env_snapshots") or []),
+                "session_path": str(path),
+                "journal_path": str(SESSIONS_PATH / f"{session_id}.journal.jsonl"),
+                "assistant_preview": assistant_preview,
+            }
+        )
+    records.sort(
+        key=lambda item: parse_iso8601(item.get("updated_at") or item.get("last_active_at") or "") or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
+        reverse=True,
+    )
+    return records[:limit]
+
+
+def process_details_for_pids(pids: list[int]) -> dict[int, dict[str, Any]]:
+    valid = sorted({int(pid) for pid in pids if isinstance(pid, int) and pid > 0})
+    if not valid:
+        return {}
+    clauses = [f"ProcessId={pid}" for pid in valid]
+    command = (
+        "Get-CimInstance Win32_Process -Filter '"
+        + " OR ".join(clauses)
+        + "' | Select-Object ProcessId,Name,CommandLine,CreationDate | ConvertTo-Json -Depth 4"
+    )
+    raw = powershell_json(command)
+    if raw is None:
+        return {}
+    items = raw if isinstance(raw, list) else [raw]
+    details = {}
+    for item in items:
+        try:
+            pid = int(item.get("ProcessId"))
+        except Exception:
+            continue
+        details[pid] = {
+            "pid": pid,
+            "name": item.get("Name") or "",
+            "command_line": item.get("CommandLine") or "",
+            "created_at": item.get("CreationDate") or "",
+        }
+    return details
+
+
+def read_recent_logs(lines: int = 80) -> dict[str, Any]:
+    if not LOGS_PATH.exists():
+        return {"latest_file": "", "tail": [], "summary": {"errors": 0, "warnings": 0, "infos": 0}}
+    log_files = sorted(LOGS_PATH.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not log_files:
+        return {"latest_file": "", "tail": [], "summary": {"errors": 0, "warnings": 0, "infos": 0}}
+    latest = log_files[0]
+    content_lines = latest.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail = content_lines[-lines:]
+    summary = {"errors": 0, "warnings": 0, "infos": 0}
+    for line in tail:
+        if "[ERROR]" in line:
+            summary["errors"] += 1
+        elif "[WARN]" in line or "[WARNING]" in line:
+            summary["warnings"] += 1
+        elif "[INFO]" in line:
+            summary["infos"] += 1
+    return {
+        "latest_file": str(latest),
+        "updated_at": dt.datetime.fromtimestamp(latest.stat().st_mtime, tz=dt.timezone.utc).isoformat(),
+        "tail": tail,
+        "summary": summary,
+    }
+
+
+def workspace_match(path_text: str, workspaces: list[dict[str, Any]]) -> dict[str, Any] | None:
+    normalized = normalize_workspace(path_text)
+    if not normalized:
+        return None
+    key = normalized.lower()
+    for workspace in workspaces:
+        if str(workspace.get("path") or "").lower() == key:
+            return workspace
+    return None
+
+
+def read_operations_dashboard() -> dict[str, Any]:
+    sessions = read_session_records(limit=12)
+    pid_candidates = [item.get("last_pid") for item in sessions]
+    process_info = process_details_for_pids([pid for pid in pid_candidates if isinstance(pid, int)])
+    workbench = read_workbench_state()
+    workspaces = workbench.get("workspaces") or []
+    active_sessions = []
+    for session in sessions:
+        pid = session.get("last_pid")
+        details = process_info.get(pid) if isinstance(pid, int) else None
+        matched_workspace = workspace_match(str(session.get("working_dir") or ""), workspaces)
+        working_dir = str(session.get("working_dir") or "")
+        session["process"] = details
+        session["is_running"] = bool(details)
+        session["working_dir_exists"] = bool(working_dir and Path(working_dir).exists())
+        session["workspace_registered"] = bool(matched_workspace)
+        session["workspace_name"] = str(matched_workspace.get("name") or "") if matched_workspace else ""
+        session["workspace_path"] = str(matched_workspace.get("path") or "") if matched_workspace else working_dir
+        active_sessions.append(session)
+    processes = sorted(process_info.values(), key=lambda item: item["pid"], reverse=True)
+    logs = read_recent_logs()
+    state = read_state()
+    gateway = gateway_health()
+    return {
+        "summary": {
+            "active_session_count": sum(1 for item in active_sessions if item.get("is_running")),
+            "tracked_session_count": len(active_sessions),
+            "active_pid_count": len(processes),
+            "gateway_enabled": bool(state["gateway"].get("enabled")),
+            "gateway_ok": bool(gateway.get("ok")),
+            "latest_log_time": logs.get("updated_at"),
+            "telemetry_active_count": len(list(TELEMETRY_ACTIVE_SESSIONS_PATH.glob("*.active"))) if TELEMETRY_ACTIVE_SESSIONS_PATH.exists() else 0,
+            "registered_workspace_count": len(workspaces),
+            "selected_workspace": state.get("selected_workspace") or "",
+            "provider": state["provider"].get("default_provider") or "",
+            "model": state["provider"].get("default_model") or "",
+        },
+        "sessions": active_sessions,
+        "processes": processes,
+        "logs": logs,
+        "last_validation": workbench.get("last_validation"),
+    }
+
+
 def read_state() -> dict[str, Any]:
     provider_bundle = read_provider_state()
     api_key = windows_read_user_env("ANTHROPIC_API_KEY")
@@ -324,6 +608,7 @@ def read_state() -> dict[str, Any]:
         "workdir": str(DEFAULT_WORKDIR),
         "selected_workspace": workbench["selected_workspace"],
         "workspaces": workbench["workspaces"],
+        "last_validation": workbench.get("last_validation"),
     }
 
 
@@ -413,6 +698,23 @@ def validate_state() -> dict[str, Any]:
     ]
     results = [run_command(cmd) for cmd in commands]
     success = all(item["exit_code"] == 0 for item in results)
+    snapshot = {
+        "success": success,
+        "validated_at": iso_now(),
+        "commands": [
+            {
+                "command": item["command"],
+                "exit_code": item["exit_code"],
+                "stdout_preview": squash_text(item.get("stdout", ""), limit=220),
+                "stderr_preview": squash_text(item.get("stderr", ""), limit=220),
+            }
+            for item in results
+        ],
+    }
+    workbench = read_workbench_state()
+    workbench["last_validation"] = snapshot
+    write_workbench_state(workbench)
+    state = read_state()
     return {
         "success": success,
         "results": results,
@@ -538,6 +840,20 @@ def launch_workspace(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def reveal_path(payload: dict[str, Any]) -> dict[str, Any]:
+    path = normalize_workspace(payload.get("path") or "")
+    if not path:
+        raise ValueError("No path supplied.")
+    target = Path(path)
+    if not target.exists():
+        raise ValueError(f"Path does not exist: {path}")
+    subprocess.Popen(["explorer.exe", str(target)])
+    return {
+        "revealed": True,
+        "path": str(target),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "JCodeConfigWorkbench/0.1"
 
@@ -548,6 +864,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/state":
                 self.send_json(read_state())
+                return
+            if self.path == "/api/operations":
+                self.send_json(read_operations_dashboard())
                 return
             if self.path == "/api/gateway":
                 self.send_json(gateway_dashboard())
@@ -599,6 +918,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/workspaces/launch":
                 payload = self.read_json()
                 self.send_json(launch_workspace(payload))
+                return
+            if self.path == "/api/open-path":
+                payload = self.read_json()
+                self.send_json(reveal_path(payload))
                 return
             self.send_error(404, "Not found")
         except json.JSONDecodeError as exc:

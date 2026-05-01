@@ -3,24 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Jcode Control Workbench</title>
+    <title>Jcode Workbench</title>
     <style>
       :root {
-        --bg: #101215;
-        --surface: #181c20;
-        --surface-2: #20262b;
-        --surface-3: #262d33;
-        --line: rgba(231, 226, 214, 0.12);
-        --text: #f2eee7;
-        --muted: #aaa59b;
-        --soft: #d3c7b4;
-        --accent: #89d7b7;
-        --accent-strong: #55c49c;
-        --blue: #8fb8ff;
-        --danger: #ff8a9a;
-        --warn: #f2c76b;
-        --shadow: 0 28px 80px rgba(0, 0, 0, 0.35);
+        --bg: #111417;
+        --surface: #191d21;
+        --surface-2: #23292e;
+        --surface-3: #2b3339;
+        --line: rgba(236, 231, 220, 0.12);
+        --text: #f3efe8;
+        --muted: #afa89d;
+        --accent: #86d8b3;
+        --accent-2: #8ebcff;
+        --danger: #ff91a1;
+        --warn: #f3c86c;
+        --ok: #7ce0af;
         --radius: 8px;
+        --shadow: 0 26px 80px rgba(0, 0, 0, 0.34);
       }
 
       * {
@@ -31,20 +30,16 @@
         margin: 0;
         min-height: 100vh;
         color: var(--text);
-        font-family:
-          "Aptos",
-          "Segoe UI",
-          "Microsoft YaHei",
-          sans-serif;
+        font-family: "Aptos", "Segoe UI", "Microsoft YaHei", sans-serif;
         background:
-          linear-gradient(135deg, rgba(137, 215, 183, 0.12), transparent 34%),
-          linear-gradient(225deg, rgba(143, 184, 255, 0.1), transparent 38%),
+          linear-gradient(120deg, rgba(134, 216, 179, 0.1), transparent 32%),
+          linear-gradient(235deg, rgba(142, 188, 255, 0.1), transparent 34%),
           repeating-linear-gradient(
             90deg,
             rgba(255, 255, 255, 0.018) 0,
             rgba(255, 255, 255, 0.018) 1px,
             transparent 1px,
-            transparent 52px
+            transparent 56px
           ),
           var(--bg);
       }
@@ -55,28 +50,28 @@
       }
 
       .app {
-        width: min(1480px, calc(100% - 32px));
-        margin: 24px auto;
+        width: min(1500px, calc(100% - 28px));
+        margin: 14px auto;
         display: grid;
-        grid-template-columns: 260px minmax(420px, 1fr) 390px;
+        grid-template-columns: 240px minmax(540px, 1fr) 380px;
         gap: 14px;
       }
 
       .rail,
       .main,
       .inspector {
-        min-height: calc(100vh - 48px);
+        min-height: calc(100vh - 28px);
         border: 1px solid var(--line);
-        background: rgba(24, 28, 32, 0.92);
+        background: rgba(25, 29, 33, 0.94);
         box-shadow: var(--shadow);
       }
 
       .rail {
         border-radius: var(--radius);
-        padding: 18px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 16px;
       }
 
       .main,
@@ -87,19 +82,18 @@
 
       .brand {
         display: grid;
-        gap: 5px;
+        gap: 6px;
       }
 
       .brand-title {
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 800;
-        letter-spacing: 0;
       }
 
       .brand-sub {
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.5;
+        line-height: 1.55;
       }
 
       .nav {
@@ -108,11 +102,11 @@
       }
 
       .nav button,
-      .command-button,
+      .button,
       .mini-button {
         border: 1px solid var(--line);
-        color: var(--text);
         background: var(--surface-2);
+        color: var(--text);
         border-radius: 7px;
         cursor: pointer;
         transition:
@@ -123,76 +117,74 @@
 
       .nav button {
         padding: 12px 13px;
-        text-align: left;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
+        text-align: left;
       }
 
       .nav button.active,
-      .command-button.primary {
-        background: linear-gradient(135deg, var(--accent), var(--blue));
+      .button.primary {
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #08110f;
         border-color: transparent;
-        color: #0c1413;
       }
 
       .nav button:hover,
-      .command-button:hover,
+      .button:hover,
       .mini-button:hover {
         transform: translateY(-1px);
-        border-color: rgba(137, 215, 183, 0.5);
+        border-color: rgba(134, 216, 179, 0.48);
       }
 
-      .status-strip {
+      .status-stack {
         margin-top: auto;
         display: grid;
         gap: 10px;
       }
 
       .status-pill {
+        padding: 10px 12px;
         border: 1px solid var(--line);
         border-radius: 7px;
-        padding: 10px 12px;
-        color: var(--soft);
-        background: rgba(255, 255, 255, 0.03);
         font-size: 12px;
-        line-height: 1.4;
+        line-height: 1.45;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
       }
 
       .status-pill.ok {
-        border-color: rgba(137, 215, 183, 0.45);
-        color: var(--accent);
+        color: var(--ok);
+        border-color: rgba(124, 224, 175, 0.42);
       }
 
       .status-pill.warn {
-        border-color: rgba(242, 199, 107, 0.45);
         color: var(--warn);
+        border-color: rgba(243, 200, 108, 0.42);
       }
 
       .status-pill.bad {
-        border-color: rgba(255, 138, 154, 0.45);
         color: var(--danger);
+        border-color: rgba(255, 145, 161, 0.42);
       }
 
       .topbar {
-        min-height: 104px;
-        padding: 22px 24px;
+        padding: 20px 22px;
         border-bottom: 1px solid var(--line);
         background:
           linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent),
-          rgba(255, 255, 255, 0.02);
+          rgba(255, 255, 255, 0.015);
         display: flex;
-        align-items: flex-end;
         justify-content: space-between;
-        gap: 18px;
+        align-items: flex-end;
+        gap: 16px;
       }
 
       h1 {
         margin: 0 0 8px;
-        font-size: 28px;
-        line-height: 1.1;
-        letter-spacing: 0;
+        font-size: 30px;
+        line-height: 1.08;
       }
 
       .lead {
@@ -202,8 +194,24 @@
         max-width: 760px;
       }
 
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .button {
+        padding: 11px 14px;
+        font-weight: 700;
+      }
+
+      .mini-button {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
       .content {
-        padding: 20px;
+        padding: 18px;
         display: grid;
         gap: 16px;
       }
@@ -217,8 +225,9 @@
         gap: 16px;
       }
 
+      .panel,
       .band,
-      .card {
+      .item {
         border: 1px solid var(--line);
         border-radius: var(--radius);
         background: rgba(255, 255, 255, 0.035);
@@ -228,95 +237,116 @@
         padding: 16px;
       }
 
-      .card {
+      .panel {
         padding: 14px;
       }
 
-      .form-grid {
+      .summary-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .ops-band {
+        padding: 16px;
+        display: grid;
         gap: 14px;
+        background:
+          linear-gradient(135deg, rgba(134, 216, 179, 0.08), transparent 42%),
+          rgba(255, 255, 255, 0.025);
       }
 
-      .field {
+      .ops-strip {
         display: grid;
-        gap: 7px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
       }
 
-      .span-2 {
-        grid-column: 1 / -1;
+      .strip-tile {
+        padding: 12px;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.14);
+        display: grid;
+        gap: 6px;
       }
 
+      .summary-tile {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 14px;
+        background: rgba(0, 0, 0, 0.12);
+        min-height: 92px;
+        display: grid;
+        align-content: space-between;
+        gap: 10px;
+      }
+
+      .summary-tile .label,
       label,
-      .label {
+      .meta {
         color: var(--muted);
         font-size: 12px;
       }
 
-      input {
-        width: 100%;
-        border: 1px solid rgba(231, 226, 214, 0.14);
-        border-radius: 7px;
-        padding: 12px 12px;
-        color: var(--text);
-        background: rgba(0, 0, 0, 0.22);
-        outline: none;
+      .summary-tile .value {
+        font-size: 24px;
+        font-weight: 800;
       }
 
-      input:focus {
-        border-color: rgba(137, 215, 183, 0.7);
-        box-shadow: 0 0 0 3px rgba(137, 215, 183, 0.12);
-      }
-
-      input[type="checkbox"] {
-        width: 18px;
-        height: 18px;
-        accent-color: var(--accent-strong);
-      }
-
-      .toggle-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-height: 44px;
-      }
-
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-      }
-
-      .command-button {
-        padding: 11px 14px;
-        font-weight: 700;
-      }
-
-      .mini-button {
-        padding: 8px 10px;
-        font-size: 12px;
-      }
-
+      .operations-grid,
       .split {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1.2fr 0.8fr;
         gap: 14px;
       }
 
-      .workspace-list,
-      .device-list,
-      .code-list {
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .toolbar-main,
+      .toolbar-side,
+      .action-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .toolbar .field-inline {
+        min-width: 260px;
+        flex: 1 1 320px;
+      }
+
+      .list {
         display: grid;
         gap: 10px;
       }
 
       .item {
+        padding: 12px;
         display: grid;
         gap: 10px;
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        background: rgba(0, 0, 0, 0.14);
-        padding: 12px;
+      }
+
+      .item.clickable {
+        cursor: pointer;
+        transition:
+          transform 120ms ease,
+          border-color 120ms ease,
+          background 120ms ease;
+      }
+
+      .item.clickable:hover,
+      .item.clickable.selected {
+        transform: translateY(-1px);
+        border-color: rgba(134, 216, 179, 0.44);
+        background: rgba(134, 216, 179, 0.08);
       }
 
       .item-head {
@@ -326,16 +356,19 @@
         gap: 12px;
       }
 
-      .name {
+      .title {
+        font-size: 15px;
         font-weight: 800;
       }
 
+      .muted {
+        color: var(--muted);
+      }
+
       .path,
-      .mono {
-        font-family:
-          "Cascadia Mono",
-          Consolas,
-          monospace;
+      .mono,
+      pre {
+        font-family: "Cascadia Mono", Consolas, monospace;
         font-size: 12px;
       }
 
@@ -354,30 +387,29 @@
       }
 
       .badge.ok {
-        color: var(--accent);
-        border-color: rgba(137, 215, 183, 0.45);
+        color: var(--ok);
+        border-color: rgba(124, 224, 175, 0.4);
       }
 
       .badge.warn {
         color: var(--warn);
-        border-color: rgba(242, 199, 107, 0.45);
+        border-color: rgba(243, 200, 108, 0.42);
       }
 
       .badge.bad {
         color: var(--danger);
-        border-color: rgba(255, 138, 154, 0.45);
+        border-color: rgba(255, 145, 161, 0.42);
       }
 
-      .inspector {
+      .cluster {
         display: grid;
-        grid-template-rows: auto auto 1fr;
+        gap: 8px;
       }
 
-      .inspector-block {
-        padding: 18px;
-        border-bottom: 1px solid var(--line);
-        display: grid;
-        gap: 12px;
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
       }
 
       .kv {
@@ -387,9 +419,8 @@
 
       .kv-row {
         display: grid;
-        grid-template-columns: 112px minmax(0, 1fr);
+        grid-template-columns: 110px minmax(0, 1fr);
         gap: 10px;
-        align-items: start;
       }
 
       .kv-row .value {
@@ -397,52 +428,107 @@
         word-break: break-all;
       }
 
-      pre {
-        margin: 0;
-        overflow: auto;
-        white-space: pre-wrap;
-        word-break: break-word;
-        color: #e8f2ff;
-        font-family:
-          "Cascadia Mono",
-          Consolas,
-          monospace;
-        font-size: 12px;
-        line-height: 1.55;
+      .inspector {
+        display: grid;
+        grid-template-rows: auto auto auto 1fr;
       }
 
-      .log-wrap {
-        min-height: 0;
-        padding: 18px;
+      .inspector-block {
+        padding: 16px;
+        border-bottom: 1px solid var(--line);
         display: grid;
         gap: 12px;
       }
 
-      .log-box {
-        min-height: 320px;
+      .detail-box,
+      .log-box,
+      .validation-box {
         border: 1px solid var(--line);
         border-radius: var(--radius);
         padding: 12px;
-        background: rgba(0, 0, 0, 0.22);
+        background: rgba(0, 0, 0, 0.16);
+      }
+
+      .log-box {
+        min-height: 280px;
         overflow: auto;
       }
 
-      @media (max-width: 1180px) {
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #e6f1ff;
+        line-height: 1.55;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .span-2 {
+        grid-column: 1 / -1;
+      }
+
+      input {
+        width: 100%;
+        border: 1px solid rgba(236, 231, 220, 0.16);
+        border-radius: 7px;
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.18);
+        color: var(--text);
+        outline: none;
+      }
+
+      input:focus {
+        border-color: rgba(134, 216, 179, 0.66);
+        box-shadow: 0 0 0 3px rgba(134, 216, 179, 0.12);
+      }
+
+      input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--ok);
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 42px;
+      }
+
+      @media (max-width: 1240px) {
         .app {
-          grid-template-columns: 230px 1fr;
+          grid-template-columns: 220px 1fr;
         }
 
         .inspector {
           grid-column: 1 / -1;
           min-height: 520px;
         }
+
+        .summary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .ops-strip {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
       }
 
-      @media (max-width: 780px) {
+      @media (max-width: 860px) {
         .app {
-          width: min(100% - 20px, 720px);
+          width: min(100% - 18px, 760px);
           grid-template-columns: 1fr;
-          margin: 10px auto;
+          margin: 9px auto;
         }
 
         .rail,
@@ -451,14 +537,17 @@
           min-height: auto;
         }
 
-        .topbar {
-          align-items: stretch;
-          flex-direction: column;
+        .topbar,
+        .operations-grid,
+        .split,
+        .form-grid,
+        .summary-grid,
+        .ops-strip {
+          grid-template-columns: 1fr;
         }
 
-        .form-grid,
-        .split {
-          grid-template-columns: 1fr;
+        .topbar {
+          align-items: stretch;
         }
       }
     </style>
@@ -468,35 +557,75 @@
       <aside class="rail">
         <div class="brand">
           <div class="brand-title">Jcode Workbench</div>
-          <div class="brand-sub">本地控制壳：配置、工作区、gateway 通信状态。</div>
+          <div class="brand-sub">运行态优先的本地工作台。先看会话、进程和日志，再进入 provider、gateway 和工作区控制。</div>
         </div>
+
         <nav class="nav" aria-label="Workbench sections">
-          <button class="active" data-section="provider">Provider <span>API</span></button>
+          <button class="active" data-section="operations">Operations <span>Live</span></button>
+          <button data-section="provider">Provider <span>API</span></button>
           <button data-section="gateway">Gateway <span>Pair</span></button>
           <button data-section="workspaces">Workspaces <span>Run</span></button>
         </nav>
-        <div class="status-strip">
+
+        <div class="status-stack">
           <div id="statusPill" class="status-pill warn">等待读取状态</div>
-          <button class="command-button" id="reloadBtn">重新读取</button>
+          <button class="button" id="reloadAllBtn">刷新全部</button>
         </div>
       </aside>
 
       <main class="main">
         <header class="topbar">
           <div>
-            <h1>配置和通信控制台</h1>
-            <p class="lead">
-              这个页面只管理外部控制面：配置文件、用户环境变量、进程启动和 gateway HTTP 通信。
-            </p>
+            <h1>控制与观察台</h1>
+            <p class="lead">这个 UI 只通过配置文件、环境变量、已有 session 文件、进程探测和 gateway HTTP 接口进行通信，不重写 jcode 核心逻辑。</p>
           </div>
           <div class="actions">
-            <button class="command-button primary" id="saveAllBtn">保存全部</button>
-            <button class="command-button" id="validateBtn">验证 Claude 链路</button>
+            <button class="button primary" id="saveAllBtn">保存配置</button>
+            <button class="button" id="validateBtn">验证 Claude 链路</button>
+            <button class="button" id="refreshOpsBtn">刷新运行态</button>
           </div>
         </header>
 
         <div class="content">
-          <section class="section active" id="section-provider">
+          <section class="section active" id="section-operations">
+            <div class="band ops-band">
+              <div class="ops-strip" id="opsStrip"></div>
+              <div class="toolbar">
+                <div class="toolbar-main">
+                  <div class="field-inline">
+                    <input id="opsSearch" placeholder="按会话名、模型、provider、路径筛选" />
+                  </div>
+                  <label class="toggle-row" for="autoRefreshToggle">
+                    <input id="autoRefreshToggle" type="checkbox" />
+                    <span>15 秒自动刷新</span>
+                  </label>
+                </div>
+                <div class="toolbar-side">
+                  <button class="button" id="focusSelectedWorkspaceBtn">定位当前工作区</button>
+                  <button class="button" id="openSelectedWorkspaceBtn">打开当前目录</button>
+                </div>
+              </div>
+            </div>
+            <div class="summary-grid" id="summaryGrid"></div>
+            <div class="operations-grid">
+              <div class="panel">
+                <div class="item-head">
+                  <div class="title">最近会话</div>
+                  <span class="badge warn" id="sessionCountBadge">0</span>
+                </div>
+                <div class="list" id="sessionList"></div>
+              </div>
+              <div class="panel">
+                <div class="item-head">
+                  <div class="title">活跃进程</div>
+                  <span class="badge warn" id="processCountBadge">0</span>
+                </div>
+                <div class="list" id="processList"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="section-provider">
             <div class="band">
               <div class="form-grid">
                 <div class="field">
@@ -518,12 +647,12 @@
               </div>
             </div>
             <div class="split">
-              <div class="card">
-                <div class="label">当前 API Key</div>
+              <div class="panel">
+                <div class="meta">当前 API Key</div>
                 <div class="mono" id="apiKeyState">未设置</div>
               </div>
-              <div class="card">
-                <div class="label">默认运行命令</div>
+              <div class="panel">
+                <div class="meta">默认运行命令</div>
                 <pre id="commands"></pre>
               </div>
             </div>
@@ -533,7 +662,7 @@
             <div class="band">
               <div class="form-grid">
                 <div class="field">
-                  <span class="label">Gateway 开关</span>
+                  <span class="meta">Gateway 开关</span>
                   <label class="toggle-row" for="gatewayEnabled">
                     <input id="gatewayEnabled" type="checkbox" />
                     <span>启用 gateway</span>
@@ -541,7 +670,7 @@
                 </div>
                 <div class="field">
                   <label for="gatewayPort">端口</label>
-                  <input id="gatewayPort" type="number" min="1" max="65535" placeholder="7643" />
+                  <input id="gatewayPort" type="number" min="1" max="65535" />
                 </div>
                 <div class="field span-2">
                   <label for="gatewayBind">绑定地址</label>
@@ -549,36 +678,36 @@
                 </div>
               </div>
               <div class="actions" style="margin-top: 14px">
-                <button class="command-button primary" id="saveGatewayBtn">保存 Gateway</button>
-                <button class="command-button" id="healthBtn">健康检查</button>
-                <button class="command-button" id="pairBtn">生成配对码</button>
-                <button class="command-button" id="refreshGatewayBtn">刷新设备</button>
+                <button class="button primary" id="saveGatewayBtn">保存 Gateway</button>
+                <button class="button" id="healthBtn">健康检查</button>
+                <button class="button" id="pairBtn">生成配对码</button>
+                <button class="button" id="refreshGatewayBtn">刷新设备</button>
               </div>
             </div>
             <div class="split">
-              <div class="card">
+              <div class="panel">
                 <div class="item-head">
                   <div>
-                    <div class="label">Gateway Health</div>
-                    <div class="mono" id="gatewayUrl"></div>
+                    <div class="title">Gateway Health</div>
+                    <div class="path" id="gatewayUrl"></div>
                   </div>
                   <span class="badge warn" id="gatewayHealthBadge">unknown</span>
                 </div>
                 <pre id="gatewayHealthBody" style="margin-top: 10px"></pre>
               </div>
-              <div class="card">
-                <div class="label">最新配对输出</div>
+              <div class="panel">
+                <div class="title">最新配对输出</div>
                 <pre id="pairOutput">尚未生成配对码。</pre>
               </div>
             </div>
             <div class="split">
-              <div class="card">
-                <div class="label" style="margin-bottom: 10px">Pending Codes</div>
-                <div class="code-list" id="pendingCodeList"></div>
+              <div class="panel">
+                <div class="title" style="margin-bottom: 10px">Pending Codes</div>
+                <div class="list" id="pendingCodeList"></div>
               </div>
-              <div class="card">
-                <div class="label" style="margin-bottom: 10px">Paired Devices</div>
-                <div class="device-list" id="deviceList"></div>
+              <div class="panel">
+                <div class="title" style="margin-bottom: 10px">Paired Devices</div>
+                <div class="list" id="deviceList"></div>
               </div>
             </div>
           </section>
@@ -596,44 +725,46 @@
                 </div>
               </div>
               <div class="actions" style="margin-top: 14px">
-                <button class="command-button primary" id="saveWorkspaceBtn">保存工作区</button>
+                <button class="button primary" id="saveWorkspaceBtn">保存工作区</button>
               </div>
             </div>
-            <div class="workspace-list" id="workspaceList"></div>
+            <div class="panel">
+              <div class="title" style="margin-bottom: 10px">工作区列表</div>
+              <div class="list" id="workspaceList"></div>
+            </div>
           </section>
         </div>
       </main>
 
       <aside class="inspector">
         <div class="inspector-block">
-          <div class="label">Runtime</div>
+          <div class="title">Runtime</div>
           <div class="kv">
-            <div class="kv-row">
-              <div class="label">config</div>
-              <div class="value mono" id="configPath"></div>
-            </div>
-            <div class="kv-row">
-              <div class="label">jcode</div>
-              <div class="value mono" id="jcodeBin"></div>
-            </div>
-            <div class="kv-row">
-              <div class="label">jcode-api</div>
-              <div class="value mono" id="jcodeApiBin"></div>
-            </div>
-            <div class="kv-row">
-              <div class="label">selected</div>
-              <div class="value mono" id="selectedWorkspace"></div>
-            </div>
+            <div class="kv-row"><div class="meta">config</div><div class="value mono" id="configPath"></div></div>
+            <div class="kv-row"><div class="meta">jcode</div><div class="value mono" id="jcodeBin"></div></div>
+            <div class="kv-row"><div class="meta">jcode-api</div><div class="value mono" id="jcodeApiBin"></div></div>
+            <div class="kv-row"><div class="meta">selected</div><div class="value mono" id="selectedWorkspace"></div></div>
           </div>
         </div>
+
         <div class="inspector-block">
-          <div class="label">Workbench State</div>
-          <div class="mono" id="workbenchStatePath"></div>
+          <div class="title">详情</div>
+          <div class="detail-box">
+            <pre id="detailPanel">选择会话或进程后，这里会显示详细信息。</pre>
+          </div>
         </div>
-        <div class="log-wrap">
-          <div class="label">执行输出</div>
+
+        <div class="inspector-block">
+          <div class="title">最近验证</div>
+          <div class="validation-box">
+            <pre id="validationPanel">尚未执行验证。</pre>
+          </div>
+        </div>
+
+        <div class="inspector-block" style="min-height: 0">
+          <div class="title">日志尾部</div>
           <div class="log-box">
-            <pre id="logs">尚未执行验证。</pre>
+            <pre id="logPanel">还没有日志。</pre>
           </div>
         </div>
       </aside>
@@ -642,7 +773,12 @@
     <script>
       const $ = (id) => document.getElementById(id);
 
-      let lastState = null;
+      let stateCache = null;
+      let gatewayCache = null;
+      let operationsCache = null;
+      let selectedEntity = null;
+      let opsQuery = "";
+      let autoRefreshTimer = null;
 
       async function fetchJSON(url, options = {}) {
         const res = await fetch(url, {
@@ -651,9 +787,7 @@
         });
         const text = await res.text();
         const payload = text ? JSON.parse(text) : {};
-        if (!res.ok) {
-          throw new Error(payload.error || `HTTP ${res.status}`);
-        }
+        if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
         return payload;
       }
 
@@ -671,13 +805,39 @@
         });
       }
 
+      function escapeHTML(value) {
+        return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[char]);
+      }
+
+      function escapeAttr(value) {
+        return escapeHTML(value).replace(/`/g, "&#96;");
+      }
+
+      function pathTail(value) {
+        const text = String(value || "").trim();
+        if (!text) return "";
+        const parts = text.replace(/[\\/]+$/, "").split(/[\\/]/);
+        return parts[parts.length - 1] || text;
+      }
+
+      function normalizeText(value) {
+        return String(value || "").toLowerCase();
+      }
+
       function renderState(state) {
-        lastState = state;
+        stateCache = state;
         const provider = state.provider || {};
         const gateway = state.gateway || {};
         $("defaultProvider").value = provider.default_provider || "claude";
         $("defaultModel").value = provider.default_model || "";
         $("apiBase").value = provider.anthropic_api_base || "";
+        $("apiKeyState").textContent = state.api_key_present ? state.api_key_masked : "未设置";
         $("gatewayEnabled").checked = Boolean(gateway.enabled);
         $("gatewayPort").value = gateway.port || 7643;
         $("gatewayBind").value = gateway.bind_addr || "0.0.0.0";
@@ -685,10 +845,9 @@
         $("jcodeBin").textContent = state.jcode_bin || "";
         $("jcodeApiBin").textContent = state.jcode_api_bin || "";
         $("selectedWorkspace").textContent = state.selected_workspace || "";
-        $("workbenchStatePath").textContent = state.workbench_state_path || "";
-        $("apiKeyState").textContent = state.api_key_present ? state.api_key_masked : "未设置";
         renderCommands(state);
         renderWorkspaces(state);
+        renderValidation(state.last_validation || null);
       }
 
       function renderCommands(state) {
@@ -701,6 +860,39 @@
           `jcode -C "${workspace}"`,
           `jcode-api -C "${workspace}"`,
         ].join("\n");
+      }
+
+      function renderValidation(validation) {
+        if (!validation) {
+          $("validationPanel").textContent = "尚未执行验证。";
+          return;
+        }
+        const lines = [`validated: ${validation.validated_at || ""}`, `success: ${validation.success ? "yes" : "no"}`, ""];
+        for (const item of validation.commands || []) {
+          lines.push(`$ ${item.command}`);
+          lines.push(`exit=${item.exit_code}`);
+          if (item.stdout_preview) lines.push(item.stdout_preview);
+          if (item.stderr_preview) lines.push(item.stderr_preview);
+          lines.push("");
+        }
+        $("validationPanel").textContent = lines.join("\n").trim();
+      }
+
+      function renderOpsStrip(summary) {
+        const selected = summary.selected_workspace || stateCache?.selected_workspace || "";
+        const items = [
+          ["Provider", summary.provider || "claude", summary.model || ""],
+          ["Current Workspace", pathTail(selected) || "none", selected || "未选择工作区"],
+          ["Gateway", summary.gateway_ok ? "online" : (summary.gateway_enabled ? "offline" : "disabled"), summary.gateway_enabled ? "已启用配置" : "配置未开启"],
+          ["Saved Workspaces", summary.registered_workspace_count ?? 0, "持久化到 workbench.json"],
+        ];
+        $("opsStrip").innerHTML = items.map(([label, value, meta]) => `
+          <div class="strip-tile">
+            <div class="meta">${escapeHTML(label)}</div>
+            <div class="title">${escapeHTML(value)}</div>
+            <div class="path">${escapeHTML(meta)}</div>
+          </div>
+        `).join("");
       }
 
       function renderWorkspaces(state) {
@@ -719,13 +911,14 @@
           item.innerHTML = `
             <div class="item-head">
               <div>
-                <div class="name">${escapeHTML(ws.name || "")}</div>
+                <div class="title">${escapeHTML(ws.name || "")}</div>
                 <div class="path">${escapeHTML(ws.path || "")}</div>
               </div>
               <span class="badge ${isSelected ? "ok" : "warn"}">${isSelected ? "当前" : "可选"}</span>
             </div>
             <div class="actions">
               <button class="mini-button" data-action="select" data-path="${escapeAttr(ws.path || "")}">设为当前</button>
+              <button class="mini-button" data-action="reveal" data-path="${escapeAttr(ws.path || "")}">打开目录</button>
               <button class="mini-button" data-action="launch-jcode" data-path="${escapeAttr(ws.path || "")}">启动 jcode</button>
               <button class="mini-button" data-action="launch-api" data-path="${escapeAttr(ws.path || "")}">启动 jcode-api</button>
               <button class="mini-button" data-action="remove" data-path="${escapeAttr(ws.path || "")}">移除</button>
@@ -736,6 +929,7 @@
       }
 
       function renderGateway(data) {
+        gatewayCache = data;
         const health = data.health || {};
         $("gatewayUrl").textContent = health.url || "";
         $("gatewayHealthBadge").className = `badge ${health.ok ? "ok" : "bad"}`;
@@ -758,7 +952,7 @@
           item.innerHTML = `
             <div class="item-head">
               <div>
-                <div class="name mono">${escapeHTML(code.code || "")}</div>
+                <div class="title mono">${escapeHTML(code.code || "")}</div>
                 <div class="path">expires: ${escapeHTML(code.expires_at || "")}</div>
               </div>
               <span class="badge ${code.expired ? "bad" : "ok"}">${code.expired ? "expired" : `${code.seconds_left || 0}s`}</span>
@@ -781,7 +975,7 @@
           item.innerHTML = `
             <div class="item-head">
               <div>
-                <div class="name">${escapeHTML(device.name || "")}</div>
+                <div class="title">${escapeHTML(device.name || "")}</div>
                 <div class="path">${escapeHTML(device.id || "")}</div>
               </div>
               <span class="badge ok">paired</span>
@@ -793,16 +987,205 @@
         }
       }
 
-      function renderValidation(result) {
-        const chunks = [];
-        for (const item of result.results || []) {
-          chunks.push(`$ ${item.command}`);
-          chunks.push(`exit=${item.exit_code}`);
-          if (item.stdout) chunks.push(item.stdout.trimEnd());
-          if (item.stderr) chunks.push(item.stderr.trimEnd());
-          chunks.push("");
+      function renderOperations(data) {
+        operationsCache = data;
+        renderSummary(data.summary || {});
+        renderOpsStrip(data.summary || {});
+        renderSessions(data.sessions || []);
+        renderProcesses(data.processes || []);
+        renderLogs(data.logs || {});
+        renderValidation(data.last_validation || stateCache?.last_validation || null);
+      }
+
+      function renderSummary(summary) {
+        const grid = $("summaryGrid");
+        const items = [
+          ["活跃会话", summary.active_session_count ?? 0, `${summary.tracked_session_count ?? 0} tracked`],
+          ["活跃 PID", summary.active_pid_count ?? 0, `${summary.telemetry_active_count ?? 0} telemetry marks`],
+          ["Gateway", summary.gateway_ok ? "online" : (summary.gateway_enabled ? "offline" : "disabled"), summary.gateway_enabled ? "enabled" : "config off"],
+          ["最新日志", summary.latest_log_time ? summary.latest_log_time.replace("T", " ").replace("Z", " UTC") : "none", "tail from ~/.jcode/logs"],
+        ];
+        grid.innerHTML = items.map(([label, value, meta]) => `
+          <div class="summary-tile">
+            <div class="label">${escapeHTML(label)}</div>
+            <div class="value">${escapeHTML(value)}</div>
+            <div class="meta">${escapeHTML(meta)}</div>
+          </div>
+        `).join("");
+      }
+
+      function renderSessions(sessions) {
+        const filtered = sessions.filter((session) => {
+          if (!opsQuery) return true;
+          const haystack = [
+            session.short_name,
+            session.session_id,
+            session.model,
+            session.provider_key,
+            session.working_dir,
+            session.workspace_name,
+            session.status_text,
+          ].map(normalizeText).join(" ");
+          return haystack.includes(opsQuery);
+        });
+        $("sessionCountBadge").textContent = `${filtered.length}/${sessions.length}`;
+        const list = $("sessionList");
+        list.innerHTML = "";
+        if (!filtered.length) {
+          list.innerHTML = '<div class="item"><div class="path">还没有会话记录。</div></div>';
+          return;
         }
-        $("logs").textContent = chunks.join("\n") || "没有输出。";
+        for (const session of filtered) {
+          const selected = selectedEntity?.type === "session" && selectedEntity.key === session.session_id;
+          const item = document.createElement("div");
+          item.className = `item clickable${selected ? " selected" : ""}`;
+          item.dataset.entityType = "session";
+          item.dataset.entityKey = session.session_id || "";
+          item.innerHTML = `
+            <div class="item-head">
+              <div>
+                <div class="title">${escapeHTML(session.short_name || session.session_id || "")}</div>
+                <div class="path">${escapeHTML(session.working_dir || "")}</div>
+              </div>
+              <span class="badge ${session.is_running ? "ok" : "warn"}">${session.is_running ? "running" : "idle"}</span>
+            </div>
+            <div class="chip-row">
+              <span class="badge ${session.workspace_registered ? "ok" : "warn"}">${session.workspace_registered ? `workspace ${escapeHTML(session.workspace_name || pathTail(session.workspace_path || ""))}` : "workspace 未登记"}</span>
+              <span class="badge ${session.working_dir_exists ? "ok" : "bad"}">${session.working_dir_exists ? "目录存在" : "目录缺失"}</span>
+            </div>
+            <div class="cluster">
+              <div class="meta">model: ${escapeHTML(session.model || "")} | provider: ${escapeHTML(session.provider_key || "")}</div>
+              <div class="meta">status: ${escapeHTML(session.status_text || "")} | last active: ${escapeHTML(session.relative_last_active || "")} | pid: ${escapeHTML(session.last_pid || "")}</div>
+              <div>${escapeHTML(session.assistant_preview || "还没有 assistant 输出摘要。")}</div>
+            </div>
+            <div class="action-row">
+              <button class="mini-button" data-session-action="select" data-path="${escapeAttr(session.workspace_path || session.working_dir || "")}">设为当前</button>
+              <button class="mini-button" data-session-action="reveal" data-path="${escapeAttr(session.working_dir || session.workspace_path || "")}">打开目录</button>
+              <button class="mini-button" data-session-action="launch-jcode" data-path="${escapeAttr(session.workspace_path || session.working_dir || "")}">启动 jcode</button>
+              <button class="mini-button" data-session-action="launch-api" data-path="${escapeAttr(session.workspace_path || session.working_dir || "")}">启动 jcode-api</button>
+              ${session.workspace_registered ? "" : `<button class="mini-button" data-session-action="register" data-path="${escapeAttr(session.working_dir || "")}" data-name="${escapeAttr(pathTail(session.working_dir || session.short_name || ""))}">登记工作区</button>`}
+            </div>
+          `;
+          list.appendChild(item);
+        }
+      }
+
+      function renderProcesses(processes) {
+        const filtered = processes.filter((process) => {
+          if (!opsQuery) return true;
+          const haystack = [process.name, process.command_line, process.pid].map(normalizeText).join(" ");
+          return haystack.includes(opsQuery);
+        });
+        $("processCountBadge").textContent = `${filtered.length}/${processes.length}`;
+        const list = $("processList");
+        list.innerHTML = "";
+        if (!filtered.length) {
+          list.innerHTML = '<div class="item"><div class="path">没有识别到活跃 jcode 进程。</div></div>';
+          return;
+        }
+        for (const process of filtered) {
+          const selected = selectedEntity?.type === "process" && String(selectedEntity.key) === String(process.pid);
+          const item = document.createElement("div");
+          item.className = `item clickable${selected ? " selected" : ""}`;
+          item.dataset.entityType = "process";
+          item.dataset.entityKey = process.pid || "";
+          item.innerHTML = `
+            <div class="item-head">
+              <div>
+                <div class="title">${escapeHTML(process.name || "")}</div>
+                <div class="path">pid ${escapeHTML(process.pid || "")}</div>
+              </div>
+              <span class="badge ok">live</span>
+            </div>
+            <div class="path">${escapeHTML(process.command_line || "")}</div>
+          `;
+          list.appendChild(item);
+        }
+      }
+
+      function renderLogs(logs) {
+        const lines = [];
+        if (logs.latest_file) lines.push(`file: ${logs.latest_file}`);
+        if (logs.updated_at) lines.push(`updated: ${logs.updated_at}`);
+        if (logs.summary) {
+          lines.push(`errors=${logs.summary.errors || 0} warnings=${logs.summary.warnings || 0} infos=${logs.summary.infos || 0}`);
+        }
+        if (logs.tail?.length) {
+          lines.push("");
+          lines.push(...logs.tail);
+        }
+        $("logPanel").textContent = lines.join("\n") || "还没有日志。";
+      }
+
+      function entityDetails(entity) {
+        if (!entity) return "选择会话或进程后，这里会显示详细信息。";
+        if (entity.type === "session") {
+          const session = (operationsCache?.sessions || []).find((item) => item.session_id === entity.key);
+          if (!session) return "未找到会话详情。";
+          return [
+            `session_id: ${session.session_id || ""}`,
+            `short_name: ${session.short_name || ""}`,
+            `status: ${session.status_text || ""}`,
+            `status_detail: ${session.status_detail || ""}`,
+            `running: ${session.is_running ? "yes" : "no"}`,
+            `provider: ${session.provider_key || ""}`,
+            `model: ${session.model || ""}`,
+            `working_dir: ${session.working_dir || ""}`,
+            `created_at: ${session.created_at || ""}`,
+            `updated_at: ${session.updated_at || ""}`,
+            `last_active_at: ${session.last_active_at || ""}`,
+            `last_pid: ${session.last_pid || ""}`,
+            `message_count: ${session.message_count || 0}`,
+            `saved: ${session.saved ? "yes" : "no"}`,
+            `journal: ${session.journal_path || ""}`,
+            "",
+            session.assistant_preview || "没有 assistant 预览。",
+          ].join("\n");
+        }
+        const process = (operationsCache?.processes || []).find((item) => String(item.pid) === String(entity.key));
+        if (!process) return "未找到进程详情。";
+        return [
+          `pid: ${process.pid || ""}`,
+          `name: ${process.name || ""}`,
+          `created_at: ${process.created_at || ""}`,
+          "",
+          process.command_line || "",
+        ].join("\n");
+      }
+
+      function updateSelectedEntity(type, key) {
+        selectedEntity = { type, key };
+        $("detailPanel").textContent = entityDetails(selectedEntity);
+        if (operationsCache) {
+          renderSessions(operationsCache.sessions || []);
+          renderProcesses(operationsCache.processes || []);
+        }
+      }
+
+      async function loadState() {
+        const state = await fetchJSON("/api/state");
+        renderState(state);
+        return state;
+      }
+
+      async function loadGateway() {
+        const gateway = await fetchJSON("/api/gateway");
+        renderGateway(gateway);
+        return gateway;
+      }
+
+      async function loadOperations() {
+        const operations = await fetchJSON("/api/operations");
+        renderOperations(operations);
+        return operations;
+      }
+
+      async function openPath(path) {
+        if (!path) throw new Error("没有可打开的路径");
+        await fetchJSON("/api/open-path", {
+          method: "POST",
+          body: JSON.stringify({ path }),
+        });
       }
 
       function providerPayload() {
@@ -827,19 +1210,6 @@
         };
       }
 
-      async function loadState() {
-        const state = await fetchJSON("/api/state");
-        renderState(state);
-        setStatus("ok", "已读取当前配置");
-        return state;
-      }
-
-      async function loadGateway() {
-        const gateway = await fetchJSON("/api/gateway");
-        renderGateway(gateway);
-        return gateway;
-      }
-
       async function saveAll() {
         const state = await fetchJSON("/api/save", {
           method: "POST",
@@ -847,7 +1217,7 @@
         });
         $("apiKey").value = "";
         renderState(state);
-        await loadGateway();
+        await Promise.all([loadGateway(), loadOperations()]);
         setStatus("ok", "配置已保存");
       }
 
@@ -857,7 +1227,7 @@
           body: JSON.stringify(gatewayPayload()),
         });
         renderState(state);
-        await loadGateway();
+        await Promise.all([loadGateway(), loadOperations()]);
         setStatus("ok", "Gateway 已保存");
       }
 
@@ -865,18 +1235,18 @@
         setStatus("warn", "正在验证 Claude 链路...");
         const result = await fetchJSON("/api/validate", { method: "POST" });
         renderState(result.state);
-        renderValidation(result);
+        renderValidation(result.state.last_validation || null);
+        await loadOperations();
         setStatus(result.success ? "ok" : "bad", result.success ? "验证通过" : "验证失败");
       }
 
       async function healthCheck() {
         const health = await fetchJSON("/api/gateway/health", { method: "POST" });
-        await loadGateway();
-        const healthBody = health.body || health.error || "";
+        await Promise.all([loadGateway(), loadOperations()]);
         $("gatewayUrl").textContent = health.url || "";
         $("gatewayHealthBadge").className = `badge ${health.ok ? "ok" : "bad"}`;
         $("gatewayHealthBadge").textContent = health.ok ? "online" : "offline";
-        $("gatewayHealthBody").textContent = healthBody;
+        $("gatewayHealthBody").textContent = health.body || health.error || "";
         setStatus(health.ok ? "ok" : "bad", health.ok ? "Gateway 在线" : "Gateway 未连接");
       }
 
@@ -884,7 +1254,7 @@
         setStatus("warn", "正在生成配对码...");
         const result = await fetchJSON("/api/gateway/pair", { method: "POST" });
         $("pairOutput").textContent = result.clean_output || result.stderr || result.stdout || "没有输出。";
-        await loadGateway();
+        await Promise.all([loadGateway(), loadOperations()]);
         setStatus(result.exit_code === 0 ? "ok" : "bad", result.pairing_code ? `配对码 ${result.pairing_code}` : "配对命令已结束");
       }
 
@@ -898,17 +1268,22 @@
         });
         $("workspaceName").value = "";
         $("workspacePath").value = "";
-        await loadState();
+        await Promise.all([loadState(), loadOperations()]);
         setStatus("ok", "工作区已保存");
       }
 
       async function workspaceAction(action, path) {
+        if (action === "reveal") {
+          await openPath(path);
+          setStatus("ok", "目录已打开");
+          return;
+        }
         if (action === "select") {
           await fetchJSON("/api/workspaces/select", {
             method: "POST",
             body: JSON.stringify({ path }),
           });
-          await loadState();
+          await Promise.all([loadState(), loadOperations()]);
           setStatus("ok", "已切换当前工作区");
           return;
         }
@@ -917,7 +1292,7 @@
             method: "POST",
             body: JSON.stringify({ path }),
           });
-          await loadState();
+          await Promise.all([loadState(), loadOperations()]);
           setStatus("ok", "工作区已移除");
           return;
         }
@@ -931,35 +1306,53 @@
         setStatus("ok", action === "launch-api" ? "已启动 jcode-api" : "已启动 jcode");
       }
 
-      function escapeHTML(value) {
-        return String(value).replace(/[&<>"']/g, (char) => ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[char]);
+      async function sessionAction(action, path, name = "") {
+        if (action === "register") {
+          $("workspaceName").value = name || pathTail(path);
+          $("workspacePath").value = path || "";
+          switchSection("workspaces");
+          setStatus("warn", "已带入工作区表单，请确认后保存");
+          return;
+        }
+        await workspaceAction(action, path);
       }
 
-      function escapeAttr(value) {
-        return escapeHTML(value).replace(/`/g, "&#96;");
+      function syncAutoRefresh() {
+        if (autoRefreshTimer) {
+          clearInterval(autoRefreshTimer);
+          autoRefreshTimer = null;
+        }
+        if (!$("autoRefreshToggle").checked) return;
+        autoRefreshTimer = setInterval(() => {
+          loadOperations().catch((err) => setStatus("bad", `自动刷新失败: ${err.message}`));
+        }, 15000);
+      }
+
+      async function refreshAll() {
+        await Promise.all([loadState(), loadGateway(), loadOperations()]);
+        setStatus("ok", "状态已刷新");
       }
 
       document.querySelectorAll(".nav button").forEach((button) => {
         button.addEventListener("click", () => switchSection(button.dataset.section));
       });
 
-      $("reloadBtn").addEventListener("click", () =>
-        Promise.all([loadState(), loadGateway()]).catch((err) => setStatus("bad", `读取失败: ${err.message}`))
+      $("reloadAllBtn").addEventListener("click", () =>
+        refreshAll().catch((err) => setStatus("bad", `刷新失败: ${err.message}`))
+      );
+      $("refreshOpsBtn").addEventListener("click", () =>
+        loadOperations()
+          .then(() => setStatus("ok", "运行态已刷新"))
+          .catch((err) => setStatus("bad", `运行态刷新失败: ${err.message}`))
       );
       $("saveAllBtn").addEventListener("click", () =>
         saveAll().catch((err) => setStatus("bad", `保存失败: ${err.message}`))
       );
-      $("saveGatewayBtn").addEventListener("click", () =>
-        saveGateway().catch((err) => setStatus("bad", `Gateway 保存失败: ${err.message}`))
-      );
       $("validateBtn").addEventListener("click", () =>
         validateState().catch((err) => setStatus("bad", `验证失败: ${err.message}`))
+      );
+      $("saveGatewayBtn").addEventListener("click", () =>
+        saveGateway().catch((err) => setStatus("bad", `Gateway 保存失败: ${err.message}`))
       );
       $("healthBtn").addEventListener("click", () =>
         healthCheck().catch((err) => setStatus("bad", `健康检查失败: ${err.message}`))
@@ -968,13 +1361,31 @@
         pairGateway().catch((err) => setStatus("bad", `配对失败: ${err.message}`))
       );
       $("refreshGatewayBtn").addEventListener("click", () =>
-        loadGateway()
+        Promise.all([loadGateway(), loadOperations()])
           .then(() => setStatus("ok", "Gateway 状态已刷新"))
           .catch((err) => setStatus("bad", `刷新失败: ${err.message}`))
       );
       $("saveWorkspaceBtn").addEventListener("click", () =>
         saveWorkspace().catch((err) => setStatus("bad", `工作区保存失败: ${err.message}`))
       );
+      $("focusSelectedWorkspaceBtn").addEventListener("click", () => {
+        switchSection("workspaces");
+        setStatus("ok", "已切换到工作区列表");
+      });
+      $("openSelectedWorkspaceBtn").addEventListener("click", () =>
+        openPath(stateCache?.selected_workspace || "")
+          .then(() => setStatus("ok", "当前工作区目录已打开"))
+          .catch((err) => setStatus("bad", `打开目录失败: ${err.message}`))
+      );
+      $("opsSearch").addEventListener("input", (event) => {
+        opsQuery = normalizeText(event.target.value);
+        if (operationsCache) {
+          renderSessions(operationsCache.sessions || []);
+          renderProcesses(operationsCache.processes || []);
+        }
+      });
+      $("autoRefreshToggle").addEventListener("change", syncAutoRefresh);
+
       $("workspaceList").addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) return;
@@ -983,7 +1394,26 @@
         );
       });
 
-      Promise.all([loadState(), loadGateway()]).catch((err) => setStatus("bad", `初始化失败: ${err.message}`));
+      $("sessionList").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-session-action]");
+        if (button) {
+          sessionAction(button.dataset.sessionAction, button.dataset.path, button.dataset.name || "").catch((err) =>
+            setStatus("bad", `会话操作失败: ${err.message}`)
+          );
+          return;
+        }
+        const target = event.target.closest(".clickable[data-entity-key]");
+        if (!target) return;
+        updateSelectedEntity(target.dataset.entityType, target.dataset.entityKey);
+      });
+
+      $("processList").addEventListener("click", (event) => {
+        const target = event.target.closest(".clickable[data-entity-key]");
+        if (!target) return;
+        updateSelectedEntity(target.dataset.entityType, target.dataset.entityKey);
+      });
+
+      refreshAll().catch((err) => setStatus("bad", `初始化失败: ${err.message}`));
     </script>
   </body>
 </html>
