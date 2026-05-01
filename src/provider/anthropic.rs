@@ -36,6 +36,7 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
 /// OAuth endpoint (with beta=true query param)
 const API_URL_OAUTH: &str = "https://api.anthropic.com/v1/messages?beta=true";
+const MODELS_URL: &str = "https://api.anthropic.com/v1/models";
 
 /// User-Agent for OAuth requests, matching the official Claude Code CLI.
 pub(crate) const CLAUDE_CLI_USER_AGENT: &str = "claude-cli/2.1.123 (external, sdk-cli)";
@@ -62,6 +63,57 @@ fn oauth_beta_headers(model: &str) -> &'static str {
 
 pub(crate) fn new_oauth_request_id() -> String {
     Uuid::new_v4().to_string()
+}
+
+fn configured_anthropic_api_base_override() -> Option<String> {
+    std::env::var("JCODE_ANTHROPIC_API_BASE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            crate::config::config()
+                .provider
+                .anthropic_api_base
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn resolve_anthropic_direct_api_url(default_url: &str, suffix: &str) -> String {
+    let Some(raw) = configured_anthropic_api_base_override() else {
+        return default_url.to_string();
+    };
+
+    let trimmed = raw.trim().trim_end_matches('/').to_string();
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return default_url.to_string();
+    }
+
+    if trimmed.ends_with(suffix) {
+        return trimmed;
+    }
+
+    if trimmed.ends_with("/v1/messages") {
+        let base = trimmed.trim_end_matches("/v1/messages");
+        return format!("{base}{suffix}");
+    }
+
+    if trimmed.ends_with("/v1/models") {
+        let base = trimmed.trim_end_matches("/v1/models");
+        return format!("{base}{suffix}");
+    }
+
+    format!("{trimmed}{suffix}")
+}
+
+pub(crate) fn direct_api_messages_url() -> String {
+    resolve_anthropic_direct_api_url(API_URL, "/v1/messages")
+}
+
+pub(crate) fn direct_api_models_url() -> String {
+    resolve_anthropic_direct_api_url(MODELS_URL, "/v1/models")
 }
 
 pub(crate) fn apply_oauth_attribution_headers(
@@ -1022,9 +1074,16 @@ impl Provider for AnthropicProvider {
     }
 
     fn set_model(&self, model: &str) -> Result<()> {
-        if !crate::provider::known_anthropic_model_ids()
-            .iter()
-            .any(|known| known == model)
+        let direct_api_key_present = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let third_party_base_enabled = configured_anthropic_api_base_override().is_some();
+        if !third_party_base_enabled
+            && !direct_api_key_present
+            && !crate::provider::known_anthropic_model_ids()
+                .iter()
+                .any(|known| known == model)
         {
             anyhow::bail!("Model {} not supported by Anthropic provider", model);
         }
@@ -1392,7 +1451,11 @@ async fn stream_response(
 
     let connect_start = std::time::Instant::now();
     // Build request with appropriate auth headers
-    let url = if is_oauth { API_URL_OAUTH } else { API_URL };
+    let url = if is_oauth {
+        API_URL_OAUTH.to_string()
+    } else {
+        direct_api_messages_url()
+    };
 
     let mut req = client
         .post(url)

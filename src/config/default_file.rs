@@ -155,6 +155,10 @@ update_channel = "stable"
 # Default provider (optional: claude|openai|copilot|openrouter)
 # When set, this provider is preferred on startup if available
 # default_provider = "copilot"
+# Optional Anthropic-compatible base URL override for direct API-key usage.
+# Accepts either a base like "https://gateway.example.com" or a full messages URL.
+# OAuth continues to use the official Anthropic endpoints.
+# anthropic_api_base = "https://gateway.example.com"
 # OpenAI reasoning effort (none|low|medium|high|xhigh)
 openai_reasoning_effort = "low"
 # OpenAI transport mode (auto|websocket|https)

@@ -676,6 +676,14 @@ fn maybe_enable_legacy_codex_auth_for_auto(has_other_provider: bool) -> Result<b
 }
 
 fn ensure_claude_auth_allowed_for_explicit_choice() -> Result<()> {
+    if std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
     if auth::claude::load_credentials().is_ok() {
         return Ok(());
     }

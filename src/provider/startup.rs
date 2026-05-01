@@ -76,7 +76,11 @@ impl MultiProvider {
             }
         }
 
-        let has_claude_creds = auth::claude::load_credentials().is_ok();
+        let has_claude_api_key = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let has_claude_creds = has_claude_api_key || auth::claude::load_credentials().is_ok();
         let has_openai_creds = auth::codex::load_credentials().is_ok();
         let has_copilot_api = auth_status.copilot_has_api_token;
         let has_antigravity_creds = auth::antigravity::load_tokens().is_ok();

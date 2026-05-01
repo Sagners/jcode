@@ -382,6 +382,12 @@ impl Config {
                 self.provider.default_provider = Some(trimmed);
             }
         }
+        if let Ok(v) = std::env::var("JCODE_ANTHROPIC_API_BASE") {
+            let trimmed = v.trim().to_string();
+            if !trimmed.is_empty() {
+                self.provider.anthropic_api_base = Some(trimmed);
+            }
+        }
         if let Ok(v) = std::env::var("JCODE_OPENAI_REASONING_EFFORT") {
             let trimmed = v.trim().to_string();
             if !trimmed.is_empty() {

@@ -8,6 +8,41 @@ fn test_parse_sse_event() {
     assert!(buffer.is_empty());
 }
 
+#[test]
+fn test_direct_api_messages_url_uses_env_override_base() {
+    let _guard = crate::storage::lock_test_env();
+    let prev = std::env::var_os("JCODE_ANTHROPIC_API_BASE");
+    crate::env::set_var("JCODE_ANTHROPIC_API_BASE", "http://127.0.0.1:23001");
+
+    assert_eq!(direct_api_messages_url(), "http://127.0.0.1:23001/v1/messages");
+    assert_eq!(direct_api_models_url(), "http://127.0.0.1:23001/v1/models");
+
+    if let Some(prev) = prev {
+        crate::env::set_var("JCODE_ANTHROPIC_API_BASE", prev);
+    } else {
+        crate::env::remove_var("JCODE_ANTHROPIC_API_BASE");
+    }
+}
+
+#[test]
+fn test_direct_api_messages_url_preserves_full_messages_endpoint() {
+    let _guard = crate::storage::lock_test_env();
+    let prev = std::env::var_os("JCODE_ANTHROPIC_API_BASE");
+    crate::env::set_var(
+        "JCODE_ANTHROPIC_API_BASE",
+        "http://127.0.0.1:23001/v1/messages",
+    );
+
+    assert_eq!(direct_api_messages_url(), "http://127.0.0.1:23001/v1/messages");
+    assert_eq!(direct_api_models_url(), "http://127.0.0.1:23001/v1/models");
+
+    if let Some(prev) = prev {
+        crate::env::set_var("JCODE_ANTHROPIC_API_BASE", prev);
+    } else {
+        crate::env::remove_var("JCODE_ANTHROPIC_API_BASE");
+    }
+}
+
 #[tokio::test]
 async fn test_available_models() {
     let provider = AnthropicProvider::new();
