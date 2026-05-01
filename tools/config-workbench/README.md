@@ -45,13 +45,16 @@ http://127.0.0.1:8765
 - smoke-test validation
 - workspace persistence
 - workspace launch actions
+- gateway config persistence
+- gateway health checks
+- pairing-code generation through `jcode pair`
+- paired-device and pending-code registry display
 
 ## Next phase
 
 The next sensible expansion is:
 
 - workspace metadata panels
-- gateway status and pairing helpers
 - session list / attach controls backed by the existing `gateway` surface
 
 That should still stay outside core agent/provider logic and talk through config,

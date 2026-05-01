@@ -3,20 +3,24 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Jcode Claude Gateway Workbench</title>
+    <title>Jcode Control Workbench</title>
     <style>
       :root {
-        --bg: #0d1117;
-        --panel: #111827;
-        --panel-2: #172033;
-        --line: rgba(255, 255, 255, 0.08);
-        --text: #f3f4f6;
-        --muted: #94a3b8;
-        --accent: #7dd3fc;
-        --accent-2: #34d399;
-        --danger: #fb7185;
-        --warn: #fbbf24;
-        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+        --bg: #101215;
+        --surface: #181c20;
+        --surface-2: #20262b;
+        --surface-3: #262d33;
+        --line: rgba(231, 226, 214, 0.12);
+        --text: #f2eee7;
+        --muted: #aaa59b;
+        --soft: #d3c7b4;
+        --accent: #89d7b7;
+        --accent-strong: #55c49c;
+        --blue: #8fb8ff;
+        --danger: #ff8a9a;
+        --warn: #f2c76b;
+        --shadow: 0 28px 80px rgba(0, 0, 0, 0.35);
+        --radius: 8px;
       }
 
       * {
@@ -25,313 +29,612 @@
 
       body {
         margin: 0;
-        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-        color: var(--text);
-        background:
-          radial-gradient(circle at top left, rgba(56, 189, 248, 0.2), transparent 30%),
-          radial-gradient(circle at top right, rgba(52, 211, 153, 0.16), transparent 25%),
-          linear-gradient(180deg, #0b1020 0%, var(--bg) 45%, #090d13 100%);
         min-height: 100vh;
+        color: var(--text);
+        font-family:
+          "Aptos",
+          "Segoe UI",
+          "Microsoft YaHei",
+          sans-serif;
+        background:
+          linear-gradient(135deg, rgba(137, 215, 183, 0.12), transparent 34%),
+          linear-gradient(225deg, rgba(143, 184, 255, 0.1), transparent 38%),
+          repeating-linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.018) 0,
+            rgba(255, 255, 255, 0.018) 1px,
+            transparent 1px,
+            transparent 52px
+          ),
+          var(--bg);
       }
 
-      .shell {
-        width: min(1200px, calc(100% - 32px));
-        margin: 32px auto;
-        display: grid;
-        grid-template-columns: 1.1fr 0.9fr;
-        gap: 20px;
-      }
-
-      .panel {
-        background: linear-gradient(180deg, rgba(23, 32, 51, 0.92), rgba(13, 17, 23, 0.96));
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        box-shadow: var(--shadow);
-        overflow: hidden;
-      }
-
-      .hero {
-        padding: 28px 28px 12px;
-      }
-
-      .eyebrow {
-        color: var(--accent);
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        font-size: 12px;
-        margin-bottom: 12px;
-      }
-
-      h1 {
-        margin: 0 0 10px;
-        font-size: 34px;
-        line-height: 1.05;
-      }
-
-      .sub {
-        color: var(--muted);
-        line-height: 1.6;
-        max-width: 70ch;
-      }
-
-      .grid {
-        padding: 16px 28px 28px;
-        display: grid;
-        gap: 16px;
-      }
-
-      .field {
-        display: grid;
-        gap: 8px;
-      }
-
-      label {
-        font-size: 13px;
-        color: var(--muted);
-      }
-
+      button,
       input {
-        width: 100%;
-        border: 1px solid rgba(125, 211, 252, 0.14);
-        border-radius: 14px;
-        background: rgba(15, 23, 42, 0.72);
-        color: var(--text);
-        padding: 14px 16px;
-        font-size: 14px;
-        outline: none;
+        font: inherit;
       }
 
-      input:focus {
-        border-color: rgba(125, 211, 252, 0.55);
-        box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12);
-      }
-
-      .actions {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      button {
-        border: 0;
-        border-radius: 999px;
-        padding: 12px 18px;
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .primary {
-        background: linear-gradient(135deg, var(--accent), #60a5fa);
-        color: #04121c;
-      }
-
-      .secondary {
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--text);
-      }
-
-      .right {
-        padding: 28px;
+      .app {
+        width: min(1480px, calc(100% - 32px));
+        margin: 24px auto;
         display: grid;
+        grid-template-columns: 260px minmax(420px, 1fr) 390px;
+        gap: 14px;
+      }
+
+      .rail,
+      .main,
+      .inspector {
+        min-height: calc(100vh - 48px);
+        border: 1px solid var(--line);
+        background: rgba(24, 28, 32, 0.92);
+        box-shadow: var(--shadow);
+      }
+
+      .rail {
+        border-radius: var(--radius);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
         gap: 18px;
       }
 
-      .stat-card,
-      .log-card {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        padding: 18px;
+      .main,
+      .inspector {
+        border-radius: var(--radius);
+        overflow: hidden;
       }
 
-      .stat-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 10px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-      }
-
-      .stat-row:last-child {
-        border-bottom: 0;
-        padding-bottom: 0;
-      }
-
-      .k {
-        color: var(--muted);
-      }
-
-      .v {
-        text-align: right;
-        font-family: Consolas, "SFMono-Regular", monospace;
-        font-size: 13px;
-      }
-
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
-      }
-
-      .ok { background: rgba(52, 211, 153, 0.12); color: var(--accent-2); }
-      .warn { background: rgba(251, 191, 36, 0.12); color: var(--warn); }
-      .bad { background: rgba(251, 113, 133, 0.12); color: var(--danger); }
-
-      pre {
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
-        font-size: 12px;
-        line-height: 1.55;
-        font-family: Consolas, "SFMono-Regular", monospace;
-        color: #dbeafe;
-      }
-
-      .mono {
-        font-family: Consolas, "SFMono-Regular", monospace;
-      }
-
-      .workspace-grid {
+      .brand {
         display: grid;
-        gap: 12px;
+        gap: 5px;
       }
 
-      .workspace-item {
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 16px;
-        padding: 14px;
-        background: rgba(255, 255, 255, 0.02);
+      .brand-title {
+        font-size: 20px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .brand-sub {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .nav {
+        display: grid;
+        gap: 8px;
+      }
+
+      .nav button,
+      .command-button,
+      .mini-button {
+        border: 1px solid var(--line);
+        color: var(--text);
+        background: var(--surface-2);
+        border-radius: 7px;
+        cursor: pointer;
+        transition:
+          transform 120ms ease,
+          border-color 120ms ease,
+          background 120ms ease;
+      }
+
+      .nav button {
+        padding: 12px 13px;
+        text-align: left;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .nav button.active,
+      .command-button.primary {
+        background: linear-gradient(135deg, var(--accent), var(--blue));
+        border-color: transparent;
+        color: #0c1413;
+      }
+
+      .nav button:hover,
+      .command-button:hover,
+      .mini-button:hover {
+        transform: translateY(-1px);
+        border-color: rgba(137, 215, 183, 0.5);
+      }
+
+      .status-strip {
+        margin-top: auto;
         display: grid;
         gap: 10px;
       }
 
-      .workspace-head {
+      .status-pill {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 10px 12px;
+        color: var(--soft);
+        background: rgba(255, 255, 255, 0.03);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .status-pill.ok {
+        border-color: rgba(137, 215, 183, 0.45);
+        color: var(--accent);
+      }
+
+      .status-pill.warn {
+        border-color: rgba(242, 199, 107, 0.45);
+        color: var(--warn);
+      }
+
+      .status-pill.bad {
+        border-color: rgba(255, 138, 154, 0.45);
+        color: var(--danger);
+      }
+
+      .topbar {
+        min-height: 104px;
+        padding: 22px 24px;
+        border-bottom: 1px solid var(--line);
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent),
+          rgba(255, 255, 255, 0.02);
         display: flex;
+        align-items: flex-end;
         justify-content: space-between;
-        gap: 12px;
-        align-items: center;
+        gap: 18px;
       }
 
-      .workspace-name {
-        font-weight: 600;
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.1;
+        letter-spacing: 0;
       }
 
-      .workspace-path {
+      .lead {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+        max-width: 760px;
+      }
+
+      .content {
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .section {
+        display: none;
+      }
+
+      .section.active {
+        display: grid;
+        gap: 16px;
+      }
+
+      .band,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .band {
+        padding: 16px;
+      }
+
+      .card {
+        padding: 14px;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .span-2 {
+        grid-column: 1 / -1;
+      }
+
+      label,
+      .label {
         color: var(--muted);
         font-size: 12px;
-        font-family: Consolas, "SFMono-Regular", monospace;
       }
 
-      .workspace-actions {
+      input {
+        width: 100%;
+        border: 1px solid rgba(231, 226, 214, 0.14);
+        border-radius: 7px;
+        padding: 12px 12px;
+        color: var(--text);
+        background: rgba(0, 0, 0, 0.22);
+        outline: none;
+      }
+
+      input:focus {
+        border-color: rgba(137, 215, 183, 0.7);
+        box-shadow: 0 0 0 3px rgba(137, 215, 183, 0.12);
+      }
+
+      input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent-strong);
+      }
+
+      .toggle-row {
         display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
       }
 
-      .mini {
-        padding: 8px 12px;
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .command-button {
+        padding: 11px 14px;
+        font-weight: 700;
+      }
+
+      .mini-button {
+        padding: 8px 10px;
         font-size: 12px;
       }
 
-      @media (max-width: 920px) {
-        .shell {
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .workspace-list,
+      .device-list,
+      .code-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .item {
+        display: grid;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: rgba(0, 0, 0, 0.14);
+        padding: 12px;
+      }
+
+      .item-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .name {
+        font-weight: 800;
+      }
+
+      .path,
+      .mono {
+        font-family:
+          "Cascadia Mono",
+          Consolas,
+          monospace;
+        font-size: 12px;
+      }
+
+      .path {
+        color: var(--muted);
+        word-break: break-all;
+      }
+
+      .badge {
+        border-radius: 999px;
+        padding: 5px 8px;
+        font-size: 11px;
+        font-weight: 800;
+        white-space: nowrap;
+        border: 1px solid var(--line);
+      }
+
+      .badge.ok {
+        color: var(--accent);
+        border-color: rgba(137, 215, 183, 0.45);
+      }
+
+      .badge.warn {
+        color: var(--warn);
+        border-color: rgba(242, 199, 107, 0.45);
+      }
+
+      .badge.bad {
+        color: var(--danger);
+        border-color: rgba(255, 138, 154, 0.45);
+      }
+
+      .inspector {
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+      }
+
+      .inspector-block {
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 12px;
+      }
+
+      .kv {
+        display: grid;
+        gap: 8px;
+      }
+
+      .kv-row {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+      }
+
+      .kv-row .value {
+        text-align: right;
+        word-break: break-all;
+      }
+
+      pre {
+        margin: 0;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #e8f2ff;
+        font-family:
+          "Cascadia Mono",
+          Consolas,
+          monospace;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .log-wrap {
+        min-height: 0;
+        padding: 18px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .log-box {
+        min-height: 320px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.22);
+        overflow: auto;
+      }
+
+      @media (max-width: 1180px) {
+        .app {
+          grid-template-columns: 230px 1fr;
+        }
+
+        .inspector {
+          grid-column: 1 / -1;
+          min-height: 520px;
+        }
+      }
+
+      @media (max-width: 780px) {
+        .app {
+          width: min(100% - 20px, 720px);
+          grid-template-columns: 1fr;
+          margin: 10px auto;
+        }
+
+        .rail,
+        .main,
+        .inspector {
+          min-height: auto;
+        }
+
+        .topbar {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .form-grid,
+        .split {
           grid-template-columns: 1fr;
         }
       }
     </style>
   </head>
   <body>
-    <div class="shell">
-      <section class="panel">
-        <div class="hero">
-          <div class="eyebrow">Claude Gateway</div>
-          <h1>Jcode Config Workbench</h1>
-          <div class="sub">
-            这个工作台专门服务 Claude 第三方网关配置。它不会侵入 jcode 核心 agent
-            循环，只负责管理配置、写入 API key、验证 provider 路由，并生成你日常真正会用的命令。
-          </div>
+    <div class="app">
+      <aside class="rail">
+        <div class="brand">
+          <div class="brand-title">Jcode Workbench</div>
+          <div class="brand-sub">本地控制壳：配置、工作区、gateway 通信状态。</div>
         </div>
-        <div class="grid">
-          <div class="field">
-            <label for="defaultProvider">默认 Provider</label>
-            <input id="defaultProvider" value="claude" />
-          </div>
-          <div class="field">
-            <label for="defaultModel">默认模型</label>
-            <input id="defaultModel" placeholder="claude-opus-4-7" />
-          </div>
-          <div class="field">
-            <label for="apiBase">Anthropic API Base</label>
-            <input id="apiBase" placeholder="http://47.83.126.28:23000" />
-          </div>
-          <div class="field">
-            <label for="apiKey">Anthropic API Key</label>
-            <input id="apiKey" type="password" placeholder="输入新 key 时才会覆盖现有值" />
+        <nav class="nav" aria-label="Workbench sections">
+          <button class="active" data-section="provider">Provider <span>API</span></button>
+          <button data-section="gateway">Gateway <span>Pair</span></button>
+          <button data-section="workspaces">Workspaces <span>Run</span></button>
+        </nav>
+        <div class="status-strip">
+          <div id="statusPill" class="status-pill warn">等待读取状态</div>
+          <button class="command-button" id="reloadBtn">重新读取</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1>配置和通信控制台</h1>
+            <p class="lead">
+              这个页面只管理外部控制面：配置文件、用户环境变量、进程启动和 gateway HTTP 通信。
+            </p>
           </div>
           <div class="actions">
-            <button class="primary" id="saveBtn">保存配置</button>
-            <button class="secondary" id="validateBtn">验证链路</button>
-            <button class="secondary" id="reloadBtn">重新读取</button>
+            <button class="command-button primary" id="saveAllBtn">保存全部</button>
+            <button class="command-button" id="validateBtn">验证 Claude 链路</button>
           </div>
-        </div>
-      </section>
+        </header>
 
-      <aside class="panel right">
-        <div class="stat-card">
-          <div id="statusPill" class="pill warn">等待读取状态</div>
-          <div class="stat-row">
-            <div class="k">配置文件</div>
-            <div class="v" id="configPath"></div>
-          </div>
-          <div class="stat-row">
-            <div class="k">jcode 路径</div>
-            <div class="v" id="jcodeBin"></div>
-          </div>
-          <div class="stat-row">
-            <div class="k">工作目录</div>
-            <div class="v" id="workdir"></div>
-          </div>
-          <div class="stat-row">
-            <div class="k">工作台状态文件</div>
-            <div class="v" id="workbenchStatePath"></div>
-          </div>
-          <div class="stat-row">
-            <div class="k">API Key</div>
-            <div class="v" id="apiKeyState"></div>
-          </div>
-        </div>
-
-        <div class="stat-card">
-          <div class="k" style="margin-bottom:10px;">工作区管理</div>
-          <div class="workspace-grid" style="margin-bottom:14px;">
-            <div class="field">
-              <label for="workspaceName">工作区名称</label>
-              <input id="workspaceName" placeholder="例如 jcode-core" />
+        <div class="content">
+          <section class="section active" id="section-provider">
+            <div class="band">
+              <div class="form-grid">
+                <div class="field">
+                  <label for="defaultProvider">默认 Provider</label>
+                  <input id="defaultProvider" value="claude" />
+                </div>
+                <div class="field">
+                  <label for="defaultModel">默认模型</label>
+                  <input id="defaultModel" placeholder="claude-opus-4-7" />
+                </div>
+                <div class="field span-2">
+                  <label for="apiBase">Anthropic API Base</label>
+                  <input id="apiBase" placeholder="http://47.83.126.28:23000" />
+                </div>
+                <div class="field span-2">
+                  <label for="apiKey">Anthropic API Key</label>
+                  <input id="apiKey" type="password" placeholder="输入新 key 时才会覆盖现有值" />
+                </div>
+              </div>
             </div>
-            <div class="field">
-              <label for="workspacePath">工作区路径</label>
-              <input id="workspacePath" placeholder="E:\\Projects\\jcode" />
+            <div class="split">
+              <div class="card">
+                <div class="label">当前 API Key</div>
+                <div class="mono" id="apiKeyState">未设置</div>
+              </div>
+              <div class="card">
+                <div class="label">默认运行命令</div>
+                <pre id="commands"></pre>
+              </div>
             </div>
-            <div class="actions">
-              <button class="primary mini" id="saveWorkspaceBtn">保存工作区</button>
+          </section>
+
+          <section class="section" id="section-gateway">
+            <div class="band">
+              <div class="form-grid">
+                <div class="field">
+                  <span class="label">Gateway 开关</span>
+                  <label class="toggle-row" for="gatewayEnabled">
+                    <input id="gatewayEnabled" type="checkbox" />
+                    <span>启用 gateway</span>
+                  </label>
+                </div>
+                <div class="field">
+                  <label for="gatewayPort">端口</label>
+                  <input id="gatewayPort" type="number" min="1" max="65535" placeholder="7643" />
+                </div>
+                <div class="field span-2">
+                  <label for="gatewayBind">绑定地址</label>
+                  <input id="gatewayBind" placeholder="0.0.0.0" />
+                </div>
+              </div>
+              <div class="actions" style="margin-top: 14px">
+                <button class="command-button primary" id="saveGatewayBtn">保存 Gateway</button>
+                <button class="command-button" id="healthBtn">健康检查</button>
+                <button class="command-button" id="pairBtn">生成配对码</button>
+                <button class="command-button" id="refreshGatewayBtn">刷新设备</button>
+              </div>
+            </div>
+            <div class="split">
+              <div class="card">
+                <div class="item-head">
+                  <div>
+                    <div class="label">Gateway Health</div>
+                    <div class="mono" id="gatewayUrl"></div>
+                  </div>
+                  <span class="badge warn" id="gatewayHealthBadge">unknown</span>
+                </div>
+                <pre id="gatewayHealthBody" style="margin-top: 10px"></pre>
+              </div>
+              <div class="card">
+                <div class="label">最新配对输出</div>
+                <pre id="pairOutput">尚未生成配对码。</pre>
+              </div>
+            </div>
+            <div class="split">
+              <div class="card">
+                <div class="label" style="margin-bottom: 10px">Pending Codes</div>
+                <div class="code-list" id="pendingCodeList"></div>
+              </div>
+              <div class="card">
+                <div class="label" style="margin-bottom: 10px">Paired Devices</div>
+                <div class="device-list" id="deviceList"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="section-workspaces">
+            <div class="band">
+              <div class="form-grid">
+                <div class="field">
+                  <label for="workspaceName">工作区名称</label>
+                  <input id="workspaceName" placeholder="例如 jcode-core" />
+                </div>
+                <div class="field">
+                  <label for="workspacePath">工作区路径</label>
+                  <input id="workspacePath" placeholder="E:\\Projects\\jcode" />
+                </div>
+              </div>
+              <div class="actions" style="margin-top: 14px">
+                <button class="command-button primary" id="saveWorkspaceBtn">保存工作区</button>
+              </div>
+            </div>
+            <div class="workspace-list" id="workspaceList"></div>
+          </section>
+        </div>
+      </main>
+
+      <aside class="inspector">
+        <div class="inspector-block">
+          <div class="label">Runtime</div>
+          <div class="kv">
+            <div class="kv-row">
+              <div class="label">config</div>
+              <div class="value mono" id="configPath"></div>
+            </div>
+            <div class="kv-row">
+              <div class="label">jcode</div>
+              <div class="value mono" id="jcodeBin"></div>
+            </div>
+            <div class="kv-row">
+              <div class="label">jcode-api</div>
+              <div class="value mono" id="jcodeApiBin"></div>
+            </div>
+            <div class="kv-row">
+              <div class="label">selected</div>
+              <div class="value mono" id="selectedWorkspace"></div>
             </div>
           </div>
-          <div id="workspaceList" class="workspace-grid"></div>
         </div>
-
-        <div class="log-card">
-          <div class="k" style="margin-bottom:10px;">建议命令</div>
-          <pre id="commands"></pre>
+        <div class="inspector-block">
+          <div class="label">Workbench State</div>
+          <div class="mono" id="workbenchStatePath"></div>
         </div>
-
-        <div class="log-card">
-          <div class="k" style="margin-bottom:10px;">验证输出</div>
-          <pre id="logs">尚未执行验证。</pre>
+        <div class="log-wrap">
+          <div class="label">执行输出</div>
+          <div class="log-box">
+            <pre id="logs">尚未执行验证。</pre>
+          </div>
         </div>
       </aside>
     </div>
@@ -339,41 +642,65 @@
     <script>
       const $ = (id) => document.getElementById(id);
 
+      let lastState = null;
+
       async function fetchJSON(url, options = {}) {
         const res = await fetch(url, {
           headers: { "Content-Type": "application/json" },
           ...options,
         });
+        const text = await res.text();
+        const payload = text ? JSON.parse(text) : {};
         if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+          throw new Error(payload.error || `HTTP ${res.status}`);
         }
-        return res.json();
+        return payload;
       }
 
-      function renderState(state, badge = null) {
+      function setStatus(kind, text) {
+        $("statusPill").className = `status-pill ${kind}`;
+        $("statusPill").textContent = text;
+      }
+
+      function switchSection(section) {
+        document.querySelectorAll(".nav button").forEach((button) => {
+          button.classList.toggle("active", button.dataset.section === section);
+        });
+        document.querySelectorAll(".section").forEach((node) => {
+          node.classList.toggle("active", node.id === `section-${section}`);
+        });
+      }
+
+      function renderState(state) {
+        lastState = state;
         const provider = state.provider || {};
+        const gateway = state.gateway || {};
         $("defaultProvider").value = provider.default_provider || "claude";
         $("defaultModel").value = provider.default_model || "";
         $("apiBase").value = provider.anthropic_api_base || "";
+        $("gatewayEnabled").checked = Boolean(gateway.enabled);
+        $("gatewayPort").value = gateway.port || 7643;
+        $("gatewayBind").value = gateway.bind_addr || "0.0.0.0";
         $("configPath").textContent = state.config_path || "";
         $("jcodeBin").textContent = state.jcode_bin || "";
-        $("workdir").textContent = state.workdir || "";
+        $("jcodeApiBin").textContent = state.jcode_api_bin || "";
+        $("selectedWorkspace").textContent = state.selected_workspace || "";
         $("workbenchStatePath").textContent = state.workbench_state_path || "";
         $("apiKeyState").textContent = state.api_key_present ? state.api_key_masked : "未设置";
+        renderCommands(state);
         renderWorkspaces(state);
+      }
 
-        const commands = [
-          `jcode --no-update -p claude -m ${provider.default_model || "claude-opus-4-7"} provider current`,
-          `jcode --no-update -p claude -m ${provider.default_model || "claude-opus-4-7"} run "Reply exactly CLAUDE_GATEWAY_OK"`,
-          `jcode -C "${state.selected_workspace || state.workdir || ""}"`,
-          `jcode-api -C "${state.selected_workspace || state.workdir || ""}"`,
-        ];
-        $("commands").textContent = commands.join("\n");
-
-        if (badge) {
-          $("statusPill").className = `pill ${badge.kind}`;
-          $("statusPill").textContent = badge.text;
-        }
+      function renderCommands(state) {
+        const provider = state.provider || {};
+        const model = provider.default_model || "claude-opus-4-7";
+        const workspace = state.selected_workspace || state.workdir || "";
+        $("commands").textContent = [
+          `jcode --no-update -p claude -m ${model} provider current`,
+          `jcode --no-update -p claude -m ${model} run "Reply exactly CLAUDE_GATEWAY_OK"`,
+          `jcode -C "${workspace}"`,
+          `jcode-api -C "${workspace}"`,
+        ].join("\n");
       }
 
       function renderWorkspaces(state) {
@@ -382,40 +709,91 @@
         const selected = (state.selected_workspace || "").toLowerCase();
         const workspaces = state.workspaces || [];
         if (!workspaces.length) {
-          const empty = document.createElement("div");
-          empty.className = "workspace-item";
-          empty.innerHTML = `<div class="workspace-path">还没有保存工作区。先填名称和路径，再点“保存工作区”。</div>`;
-          list.appendChild(empty);
+          list.innerHTML = '<div class="item"><div class="path">还没有保存工作区。</div></div>';
           return;
         }
         for (const ws of workspaces) {
           const item = document.createElement("div");
-          item.className = "workspace-item";
+          item.className = "item";
           const isSelected = (ws.path || "").toLowerCase() === selected;
           item.innerHTML = `
-            <div class="workspace-head">
+            <div class="item-head">
               <div>
-                <div class="workspace-name">${ws.name || ""}</div>
-                <div class="workspace-path">${ws.path || ""}</div>
+                <div class="name">${escapeHTML(ws.name || "")}</div>
+                <div class="path">${escapeHTML(ws.path || "")}</div>
               </div>
-              <div class="pill ${isSelected ? "ok" : "warn"}">${isSelected ? "当前工作区" : "可选"}</div>
+              <span class="badge ${isSelected ? "ok" : "warn"}">${isSelected ? "当前" : "可选"}</span>
             </div>
-            <div class="workspace-actions">
-              <button class="secondary mini" data-action="select" data-path="${ws.path || ""}">设为当前</button>
-              <button class="secondary mini" data-action="launch-jcode" data-path="${ws.path || ""}">启动 jcode</button>
-              <button class="secondary mini" data-action="launch-api" data-path="${ws.path || ""}">启动 jcode-api</button>
-              <button class="secondary mini" data-action="remove" data-path="${ws.path || ""}">移除</button>
+            <div class="actions">
+              <button class="mini-button" data-action="select" data-path="${escapeAttr(ws.path || "")}">设为当前</button>
+              <button class="mini-button" data-action="launch-jcode" data-path="${escapeAttr(ws.path || "")}">启动 jcode</button>
+              <button class="mini-button" data-action="launch-api" data-path="${escapeAttr(ws.path || "")}">启动 jcode-api</button>
+              <button class="mini-button" data-action="remove" data-path="${escapeAttr(ws.path || "")}">移除</button>
             </div>
           `;
           list.appendChild(item);
         }
       }
 
-      function renderLogs(result) {
-        if (!result) {
-          $("logs").textContent = "尚未执行验证。";
+      function renderGateway(data) {
+        const health = data.health || {};
+        $("gatewayUrl").textContent = health.url || "";
+        $("gatewayHealthBadge").className = `badge ${health.ok ? "ok" : "bad"}`;
+        $("gatewayHealthBadge").textContent = health.ok ? "online" : "offline";
+        $("gatewayHealthBody").textContent = health.body || health.error || "";
+        renderPendingCodes(data.pending_codes || []);
+        renderDevices(data.devices || []);
+      }
+
+      function renderPendingCodes(codes) {
+        const list = $("pendingCodeList");
+        list.innerHTML = "";
+        if (!codes.length) {
+          list.innerHTML = '<div class="item"><div class="path">没有待配对码。</div></div>';
           return;
         }
+        for (const code of codes) {
+          const item = document.createElement("div");
+          item.className = "item";
+          item.innerHTML = `
+            <div class="item-head">
+              <div>
+                <div class="name mono">${escapeHTML(code.code || "")}</div>
+                <div class="path">expires: ${escapeHTML(code.expires_at || "")}</div>
+              </div>
+              <span class="badge ${code.expired ? "bad" : "ok"}">${code.expired ? "expired" : `${code.seconds_left || 0}s`}</span>
+            </div>
+          `;
+          list.appendChild(item);
+        }
+      }
+
+      function renderDevices(devices) {
+        const list = $("deviceList");
+        list.innerHTML = "";
+        if (!devices.length) {
+          list.innerHTML = '<div class="item"><div class="path">还没有已配对设备。</div></div>';
+          return;
+        }
+        for (const device of devices) {
+          const item = document.createElement("div");
+          item.className = "item";
+          item.innerHTML = `
+            <div class="item-head">
+              <div>
+                <div class="name">${escapeHTML(device.name || "")}</div>
+                <div class="path">${escapeHTML(device.id || "")}</div>
+              </div>
+              <span class="badge ok">paired</span>
+            </div>
+            <div class="path">paired: ${escapeHTML(device.paired_at || "")}</div>
+            <div class="path">last seen: ${escapeHTML(device.last_seen || "")}</div>
+          `;
+          list.appendChild(item);
+        }
+      }
+
+      function renderValidation(result) {
         const chunks = [];
         for (const item of result.results || []) {
           chunks.push(`$ ${item.command}`);
@@ -424,132 +802,188 @@
           if (item.stderr) chunks.push(item.stderr.trimEnd());
           chunks.push("");
         }
-        $("logs").textContent = chunks.join("\n");
+        $("logs").textContent = chunks.join("\n") || "没有输出。";
       }
 
-      async function loadState() {
-        const state = await fetchJSON("/api/state");
-        renderState(state, { kind: "ok", text: "已读取当前配置" });
-        return state;
-      }
-
-      async function saveState() {
-        const payload = {
+      function providerPayload() {
+        return {
           provider: {
             default_provider: $("defaultProvider").value.trim(),
             default_model: $("defaultModel").value.trim(),
             anthropic_api_base: $("apiBase").value.trim(),
           },
+          gateway: gatewayPayload().gateway,
           anthropic_api_key: $("apiKey").value.trim(),
         };
+      }
+
+      function gatewayPayload() {
+        return {
+          gateway: {
+            enabled: $("gatewayEnabled").checked,
+            port: Number($("gatewayPort").value || 7643),
+            bind_addr: $("gatewayBind").value.trim() || "0.0.0.0",
+          },
+        };
+      }
+
+      async function loadState() {
+        const state = await fetchJSON("/api/state");
+        renderState(state);
+        setStatus("ok", "已读取当前配置");
+        return state;
+      }
+
+      async function loadGateway() {
+        const gateway = await fetchJSON("/api/gateway");
+        renderGateway(gateway);
+        return gateway;
+      }
+
+      async function saveAll() {
         const state = await fetchJSON("/api/save", {
           method: "POST",
-          body: JSON.stringify(payload),
+          body: JSON.stringify(providerPayload()),
         });
         $("apiKey").value = "";
-        renderState(state, { kind: "ok", text: "配置已保存" });
+        renderState(state);
+        await loadGateway();
+        setStatus("ok", "配置已保存");
       }
 
-      async function saveWorkspace() {
-        const payload = {
-          name: $("workspaceName").value.trim(),
-          path: $("workspacePath").value.trim(),
-        };
-        await fetchJSON("/api/workspaces/save", {
+      async function saveGateway() {
+        const state = await fetchJSON("/api/gateway/save", {
           method: "POST",
-          body: JSON.stringify(payload),
+          body: JSON.stringify(gatewayPayload()),
         });
-        $("workspaceName").value = "";
-        $("workspacePath").value = "";
-        const state = await loadState();
-        renderState(state, { kind: "ok", text: "工作区已保存" });
-      }
-
-      async function selectWorkspace(path) {
-        await fetchJSON("/api/workspaces/select", {
-          method: "POST",
-          body: JSON.stringify({ path }),
-        });
-        const state = await loadState();
-        renderState(state, { kind: "ok", text: "已切换当前工作区" });
-      }
-
-      async function removeWorkspace(path) {
-        await fetchJSON("/api/workspaces/remove", {
-          method: "POST",
-          body: JSON.stringify({ path }),
-        });
-        const state = await loadState();
-        renderState(state, { kind: "ok", text: "工作区已移除" });
-      }
-
-      async function launchWorkspace(path, shell) {
-        await fetchJSON("/api/workspaces/launch", {
-          method: "POST",
-          body: JSON.stringify({ path, shell }),
-        });
-        $("statusPill").className = "pill ok";
-        $("statusPill").textContent = shell === "jcode-api" ? "已启动 jcode-api" : "已启动 jcode";
+        renderState(state);
+        await loadGateway();
+        setStatus("ok", "Gateway 已保存");
       }
 
       async function validateState() {
-        $("statusPill").className = "pill warn";
-        $("statusPill").textContent = "正在验证...";
+        setStatus("warn", "正在验证 Claude 链路...");
         const result = await fetchJSON("/api/validate", { method: "POST" });
-        renderState(result.state, {
-          kind: result.success ? "ok" : "bad",
-          text: result.success ? "验证通过" : "验证失败",
-        });
-        renderLogs(result);
+        renderState(result.state);
+        renderValidation(result);
+        setStatus(result.success ? "ok" : "bad", result.success ? "验证通过" : "验证失败");
       }
 
-      $("saveBtn").addEventListener("click", () =>
-        saveState().catch((err) => {
-          $("statusPill").className = "pill bad";
-          $("statusPill").textContent = `保存失败: ${err.message}`;
-        })
-      );
+      async function healthCheck() {
+        const health = await fetchJSON("/api/gateway/health", { method: "POST" });
+        await loadGateway();
+        const healthBody = health.body || health.error || "";
+        $("gatewayUrl").textContent = health.url || "";
+        $("gatewayHealthBadge").className = `badge ${health.ok ? "ok" : "bad"}`;
+        $("gatewayHealthBadge").textContent = health.ok ? "online" : "offline";
+        $("gatewayHealthBody").textContent = healthBody;
+        setStatus(health.ok ? "ok" : "bad", health.ok ? "Gateway 在线" : "Gateway 未连接");
+      }
 
-      $("validateBtn").addEventListener("click", () =>
-        validateState().catch((err) => {
-          $("statusPill").className = "pill bad";
-          $("statusPill").textContent = `验证失败: ${err.message}`;
-        })
-      );
+      async function pairGateway() {
+        setStatus("warn", "正在生成配对码...");
+        const result = await fetchJSON("/api/gateway/pair", { method: "POST" });
+        $("pairOutput").textContent = result.clean_output || result.stderr || result.stdout || "没有输出。";
+        await loadGateway();
+        setStatus(result.exit_code === 0 ? "ok" : "bad", result.pairing_code ? `配对码 ${result.pairing_code}` : "配对命令已结束");
+      }
+
+      async function saveWorkspace() {
+        await fetchJSON("/api/workspaces/save", {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("workspaceName").value.trim(),
+            path: $("workspacePath").value.trim(),
+          }),
+        });
+        $("workspaceName").value = "";
+        $("workspacePath").value = "";
+        await loadState();
+        setStatus("ok", "工作区已保存");
+      }
+
+      async function workspaceAction(action, path) {
+        if (action === "select") {
+          await fetchJSON("/api/workspaces/select", {
+            method: "POST",
+            body: JSON.stringify({ path }),
+          });
+          await loadState();
+          setStatus("ok", "已切换当前工作区");
+          return;
+        }
+        if (action === "remove") {
+          await fetchJSON("/api/workspaces/remove", {
+            method: "POST",
+            body: JSON.stringify({ path }),
+          });
+          await loadState();
+          setStatus("ok", "工作区已移除");
+          return;
+        }
+        await fetchJSON("/api/workspaces/launch", {
+          method: "POST",
+          body: JSON.stringify({
+            path,
+            shell: action === "launch-api" ? "jcode-api" : "jcode",
+          }),
+        });
+        setStatus("ok", action === "launch-api" ? "已启动 jcode-api" : "已启动 jcode");
+      }
+
+      function escapeHTML(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[char]);
+      }
+
+      function escapeAttr(value) {
+        return escapeHTML(value).replace(/`/g, "&#96;");
+      }
+
+      document.querySelectorAll(".nav button").forEach((button) => {
+        button.addEventListener("click", () => switchSection(button.dataset.section));
+      });
 
       $("reloadBtn").addEventListener("click", () =>
-        loadState().catch((err) => {
-          $("statusPill").className = "pill bad";
-          $("statusPill").textContent = `读取失败: ${err.message}`;
-        })
+        Promise.all([loadState(), loadGateway()]).catch((err) => setStatus("bad", `读取失败: ${err.message}`))
       );
-
+      $("saveAllBtn").addEventListener("click", () =>
+        saveAll().catch((err) => setStatus("bad", `保存失败: ${err.message}`))
+      );
+      $("saveGatewayBtn").addEventListener("click", () =>
+        saveGateway().catch((err) => setStatus("bad", `Gateway 保存失败: ${err.message}`))
+      );
+      $("validateBtn").addEventListener("click", () =>
+        validateState().catch((err) => setStatus("bad", `验证失败: ${err.message}`))
+      );
+      $("healthBtn").addEventListener("click", () =>
+        healthCheck().catch((err) => setStatus("bad", `健康检查失败: ${err.message}`))
+      );
+      $("pairBtn").addEventListener("click", () =>
+        pairGateway().catch((err) => setStatus("bad", `配对失败: ${err.message}`))
+      );
+      $("refreshGatewayBtn").addEventListener("click", () =>
+        loadGateway()
+          .then(() => setStatus("ok", "Gateway 状态已刷新"))
+          .catch((err) => setStatus("bad", `刷新失败: ${err.message}`))
+      );
       $("saveWorkspaceBtn").addEventListener("click", () =>
-        saveWorkspace().catch((err) => {
-          $("statusPill").className = "pill bad";
-          $("statusPill").textContent = `工作区保存失败: ${err.message}`;
-        })
+        saveWorkspace().catch((err) => setStatus("bad", `工作区保存失败: ${err.message}`))
       );
-
       $("workspaceList").addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) return;
-        const { action, path } = button.dataset;
-        const task =
-          action === "select" ? selectWorkspace(path) :
-          action === "remove" ? removeWorkspace(path) :
-          action === "launch-api" ? launchWorkspace(path, "jcode-api") :
-          launchWorkspace(path, "jcode");
-        task.catch((err) => {
-          $("statusPill").className = "pill bad";
-          $("statusPill").textContent = `工作区操作失败: ${err.message}`;
-        });
+        workspaceAction(button.dataset.action, button.dataset.path).catch((err) =>
+          setStatus("bad", `工作区操作失败: ${err.message}`)
+        );
       });
 
-      loadState().catch((err) => {
-        $("statusPill").className = "pill bad";
-        $("statusPill").textContent = `初始化失败: ${err.message}`;
-      });
+      Promise.all([loadState(), loadGateway()]).catch((err) => setStatus("bad", `初始化失败: ${err.message}`));
     </script>
   </body>
-  </html>
+</html>

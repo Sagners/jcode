@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
+import re
 import subprocess
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -14,9 +18,11 @@ ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
 CONFIG_PATH = Path.home() / ".jcode" / "config.toml"
 WORKBENCH_STATE_PATH = Path.home() / ".jcode" / "workbench.json"
+DEVICES_PATH = Path.home() / ".jcode" / "devices.json"
 DEFAULT_WORKDIR = Path.home() / "Documents" / "Playground"
 JCODE_BIN = Path.home() / ".cargo" / "bin" / "jcode.exe"
 JCODE_API_BIN = Path.home() / ".cargo" / "bin" / "jcode-api.cmd"
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 def read_file_text(path: Path) -> str:
@@ -124,20 +130,38 @@ def read_provider_state() -> dict[str, Any]:
         "default_model": "",
         "anthropic_api_base": "",
     }
+    gateway = {
+        "enabled": False,
+        "port": 7643,
+        "bind_addr": "0.0.0.0",
+    }
     active = False
+    active_gateway = False
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if line.startswith("[") and line.endswith("]"):
             active = line == "[provider]"
+            active_gateway = line == "[gateway]"
             continue
-        if not active or "=" not in line or line.startswith("#"):
+        if "=" not in line or line.startswith("#"):
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key in provider:
+        raw_value = value.strip()
+        value = raw_value.strip('"').strip("'")
+        if active and key in provider:
             provider[key] = value
-    return provider
+        if active_gateway:
+            if key == "enabled":
+                gateway["enabled"] = value.lower() in {"true", "1", "yes", "on"}
+            elif key == "port":
+                try:
+                    gateway["port"] = int(value)
+                except ValueError:
+                    pass
+            elif key == "bind_addr":
+                gateway["bind_addr"] = value
+    return {"provider": provider, "gateway": gateway}
 
 
 def upsert_provider_values(updates: dict[str, str]) -> None:
@@ -169,6 +193,55 @@ def upsert_provider_values(updates: dict[str, str]) -> None:
 
     for key, value in updates.items():
         rendered = f'{key} = "{value}"'
+        found = False
+        for idx in range(section_start + 1, section_end):
+            stripped = lines[idx].strip()
+            if stripped.startswith(f"{key} ="):
+                lines[idx] = rendered
+                found = True
+                break
+        if not found:
+            lines.insert(section_end, rendered)
+            section_end += 1
+
+    CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def upsert_gateway_values(updates: dict[str, Any]) -> None:
+    ensure_parent(CONFIG_PATH)
+    lines = read_file_text(CONFIG_PATH).splitlines()
+    if not lines:
+        lines = []
+
+    section_start = None
+    section_end = None
+    for idx, raw in enumerate(lines):
+        line = raw.strip()
+        if line == "[gateway]":
+            section_start = idx
+            section_end = len(lines)
+            for j in range(idx + 1, len(lines)):
+                nxt = lines[j].strip()
+                if nxt.startswith("[") and nxt.endswith("]"):
+                    section_end = j
+                    break
+            break
+
+    if section_start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("[gateway]")
+        section_start = len(lines) - 1
+        section_end = len(lines)
+
+    normalized = {
+        "enabled": "true" if bool(updates.get("enabled")) else "false",
+        "port": str(int(updates.get("port") or 7643)),
+        "bind_addr": str(updates.get("bind_addr") or "0.0.0.0"),
+    }
+
+    for key, value in normalized.items():
+        rendered = f'{key} = "{value}"' if key == "bind_addr" else f"{key} = {value}"
         found = False
         for idx in range(section_start + 1, section_end):
             stripped = lines[idx].strip()
@@ -231,17 +304,23 @@ def masked_secret(secret: str) -> str:
     return f"{secret[:4]}...{secret[-4:]}"
 
 
+def strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text or "")
+
+
 def read_state() -> dict[str, Any]:
-    provider = read_provider_state()
+    provider_bundle = read_provider_state()
     api_key = windows_read_user_env("ANTHROPIC_API_KEY")
     workbench = read_workbench_state()
     return {
-        "provider": provider,
+        "provider": provider_bundle["provider"],
+        "gateway": provider_bundle["gateway"],
         "api_key_present": bool(api_key.strip()),
         "api_key_masked": masked_secret(api_key.strip()),
         "config_path": str(CONFIG_PATH),
         "workbench_state_path": str(WORKBENCH_STATE_PATH),
         "jcode_bin": str(JCODE_BIN),
+        "jcode_api_bin": str(JCODE_API_BIN),
         "workdir": str(DEFAULT_WORKDIR),
         "selected_workspace": workbench["selected_workspace"],
         "workspaces": workbench["workspaces"],
@@ -250,12 +329,20 @@ def read_state() -> dict[str, Any]:
 
 def save_state(payload: dict[str, Any]) -> dict[str, Any]:
     provider = payload.get("provider") or {}
+    gateway = payload.get("gateway") or {}
     updates = {
         "default_provider": str(provider.get("default_provider") or "claude"),
         "default_model": str(provider.get("default_model") or "claude-opus-4-7"),
         "anthropic_api_base": str(provider.get("anthropic_api_base") or "").strip(),
     }
     upsert_provider_values(updates)
+    upsert_gateway_values(
+        {
+            "enabled": bool(gateway.get("enabled")),
+            "port": int(gateway.get("port") or 7643),
+            "bind_addr": str(gateway.get("bind_addr") or "0.0.0.0"),
+        }
+    )
 
     api_key = str(payload.get("anthropic_api_key") or "").strip()
     clear_api_key = bool(payload.get("clear_api_key"))
@@ -334,6 +421,96 @@ def validate_state() -> dict[str, Any]:
     }
 
 
+def read_device_registry() -> dict[str, Any]:
+    text = read_file_text(DEVICES_PATH)
+    if not text.strip():
+        return {"devices": [], "pending_codes": []}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {"devices": [], "pending_codes": []}
+    now = dt.datetime.now(dt.timezone.utc)
+    pending_codes = []
+    for code in data.get("pending_codes") or []:
+        expires_at = str(code.get("expires_at") or "") if isinstance(code, dict) else ""
+        expired = False
+        seconds_left = None
+        try:
+            expires = dt.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            seconds_left = max(0, int((expires - now).total_seconds()))
+            expired = seconds_left == 0
+        except ValueError:
+            expired = True
+        pending_codes.append({**code, "expired": expired, "seconds_left": seconds_left})
+    return {
+        "devices": data.get("devices") or [],
+        "pending_codes": pending_codes,
+    }
+
+
+def gateway_connect_host(bind_addr: str) -> str:
+    bind_addr = (bind_addr or "").strip()
+    if bind_addr in {"0.0.0.0", "::", ""}:
+        return "127.0.0.1"
+    return bind_addr
+
+
+def gateway_health() -> dict[str, Any]:
+    state = read_state()
+    gateway = state["gateway"]
+    host = gateway_connect_host(gateway.get("bind_addr") or "127.0.0.1")
+    port = int(gateway.get("port") or 7643)
+    url = f"http://{host}:{port}/health"
+    result: dict[str, Any] = {
+        "enabled": bool(gateway.get("enabled")),
+        "host": host,
+        "port": port,
+        "url": url,
+        "ok": False,
+    }
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            result["status_code"] = response.status
+            result["body"] = body
+            result["ok"] = response.status == 200
+    except urllib.error.HTTPError as exc:
+        result["status_code"] = exc.code
+        result["body"] = exc.read().decode("utf-8", errors="replace")
+        result["error"] = str(exc)
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def gateway_pair_command() -> dict[str, Any]:
+    result = run_command([str(JCODE_BIN), "--no-update", "pair"])
+    output = strip_ansi("\n".join([result.get("stderr", ""), result.get("stdout", "")]))
+    match = re.search(r"Pairing code:\s+([0-9]{3})\s+([0-9]{3})", output)
+    if match:
+        result["pairing_code"] = f"{match.group(1)}{match.group(2)}"
+    uri_match = re.search(r"jcode://pair\?host=([^\s&]+)&port=([0-9]+)&code=([0-9]{6})", output)
+    if uri_match:
+        result["pair_uri"] = uri_match.group(0)
+        result["connect_host"] = uri_match.group(1)
+        result["connect_port"] = int(uri_match.group(2))
+        result["pairing_code"] = uri_match.group(3)
+    result["clean_output"] = output
+    return result
+
+
+def gateway_dashboard() -> dict[str, Any]:
+    state = read_state()
+    registry = read_device_registry()
+    return {
+        "gateway": state["gateway"],
+        "health": gateway_health(),
+        "devices": registry["devices"],
+        "pending_codes": registry["pending_codes"],
+        "devices_path": str(DEVICES_PATH),
+    }
+
+
 def launch_workspace(payload: dict[str, Any]) -> dict[str, Any]:
     path = normalize_workspace(payload.get("path") or read_state().get("selected_workspace"))
     if not path:
@@ -368,44 +545,66 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:
-        if self.path == "/api/state":
-            self.send_json(read_state())
-            return
-        if self.path in ("/", "/index.html"):
-            self.serve_file(WEB_ROOT / "index.html", "text/html; charset=utf-8")
-            return
-        self.send_error(404, "Not found")
+        try:
+            if self.path == "/api/state":
+                self.send_json(read_state())
+                return
+            if self.path == "/api/gateway":
+                self.send_json(gateway_dashboard())
+                return
+            if self.path in ("/", "/index.html"):
+                self.serve_file(WEB_ROOT / "index.html", "text/html; charset=utf-8")
+                return
+            self.send_error(404, "Not found")
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, status=500)
 
     def do_POST(self) -> None:
-        if self.path == "/api/save":
-            payload = self.read_json()
-            self.send_json(save_state(payload))
-            return
-        if self.path == "/api/validate":
-            self.send_json(validate_state())
-            return
-        if self.path == "/api/workspaces/save":
-            payload = self.read_json()
-            self.send_json(
-                upsert_workspace(
-                    str(payload.get("name") or ""),
-                    str(payload.get("path") or ""),
+        try:
+            if self.path == "/api/save":
+                payload = self.read_json()
+                self.send_json(save_state(payload))
+                return
+            if self.path == "/api/validate":
+                self.send_json(validate_state())
+                return
+            if self.path == "/api/gateway/save":
+                payload = self.read_json()
+                upsert_gateway_values(payload.get("gateway") or {})
+                self.send_json(read_state())
+                return
+            if self.path == "/api/gateway/health":
+                self.send_json(gateway_health())
+                return
+            if self.path == "/api/gateway/pair":
+                self.send_json(gateway_pair_command())
+                return
+            if self.path == "/api/workspaces/save":
+                payload = self.read_json()
+                self.send_json(
+                    upsert_workspace(
+                        str(payload.get("name") or ""),
+                        str(payload.get("path") or ""),
+                    )
                 )
-            )
-            return
-        if self.path == "/api/workspaces/remove":
-            payload = self.read_json()
-            self.send_json(remove_workspace(str(payload.get("path") or "")))
-            return
-        if self.path == "/api/workspaces/select":
-            payload = self.read_json()
-            self.send_json(select_workspace(str(payload.get("path") or "")))
-            return
-        if self.path == "/api/workspaces/launch":
-            payload = self.read_json()
-            self.send_json(launch_workspace(payload))
-            return
-        self.send_error(404, "Not found")
+                return
+            if self.path == "/api/workspaces/remove":
+                payload = self.read_json()
+                self.send_json(remove_workspace(str(payload.get("path") or "")))
+                return
+            if self.path == "/api/workspaces/select":
+                payload = self.read_json()
+                self.send_json(select_workspace(str(payload.get("path") or "")))
+                return
+            if self.path == "/api/workspaces/launch":
+                payload = self.read_json()
+                self.send_json(launch_workspace(payload))
+                return
+            self.send_error(404, "Not found")
+        except json.JSONDecodeError as exc:
+            self.send_json({"error": f"Invalid JSON: {exc}"}, status=400)
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, status=500)
 
     def read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or "0")
