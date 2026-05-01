@@ -13,12 +13,20 @@ This tool stays outside the core `jcode` runtime loop and focuses on:
 - selecting the current workspace
 - launching `jcode` or `jcode-api` in a chosen workspace
 
+It is intentionally a control-plane shell, not a session UI.
+
 It is intended as the first UI-friendly layer for later richer clients.
 
 ## Run
 
 ```powershell
 python E:\Projects\jcode\tools\config-workbench\server.py
+```
+
+or:
+
+```powershell
+E:\Projects\jcode\tools\config-workbench\start.cmd
 ```
 
 Then open:
@@ -37,6 +45,17 @@ http://127.0.0.1:8765
 - smoke-test validation
 - workspace persistence
 - workspace launch actions
+
+## Next phase
+
+The next sensible expansion is:
+
+- workspace metadata panels
+- gateway status and pairing helpers
+- session list / attach controls backed by the existing `gateway` surface
+
+That should still stay outside core agent/provider logic and talk through config,
+process launch, and gateway communication surfaces.
 
 ## Why this shape
 
