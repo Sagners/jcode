@@ -196,6 +196,48 @@
         font-family: Consolas, "SFMono-Regular", monospace;
       }
 
+      .workspace-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .workspace-item {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.02);
+        display: grid;
+        gap: 10px;
+      }
+
+      .workspace-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .workspace-name {
+        font-weight: 600;
+      }
+
+      .workspace-path {
+        color: var(--muted);
+        font-size: 12px;
+        font-family: Consolas, "SFMono-Regular", monospace;
+      }
+
+      .workspace-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .mini {
+        padding: 8px 12px;
+        font-size: 12px;
+      }
+
       @media (max-width: 920px) {
         .shell {
           grid-template-columns: 1fr;
@@ -255,9 +297,31 @@
             <div class="v" id="workdir"></div>
           </div>
           <div class="stat-row">
+            <div class="k">工作台状态文件</div>
+            <div class="v" id="workbenchStatePath"></div>
+          </div>
+          <div class="stat-row">
             <div class="k">API Key</div>
             <div class="v" id="apiKeyState"></div>
           </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="k" style="margin-bottom:10px;">工作区管理</div>
+          <div class="workspace-grid" style="margin-bottom:14px;">
+            <div class="field">
+              <label for="workspaceName">工作区名称</label>
+              <input id="workspaceName" placeholder="例如 jcode-core" />
+            </div>
+            <div class="field">
+              <label for="workspacePath">工作区路径</label>
+              <input id="workspacePath" placeholder="E:\\Projects\\jcode" />
+            </div>
+            <div class="actions">
+              <button class="primary mini" id="saveWorkspaceBtn">保存工作区</button>
+            </div>
+          </div>
+          <div id="workspaceList" class="workspace-grid"></div>
         </div>
 
         <div class="log-card">
@@ -294,17 +358,56 @@
         $("configPath").textContent = state.config_path || "";
         $("jcodeBin").textContent = state.jcode_bin || "";
         $("workdir").textContent = state.workdir || "";
+        $("workbenchStatePath").textContent = state.workbench_state_path || "";
         $("apiKeyState").textContent = state.api_key_present ? state.api_key_masked : "未设置";
+        renderWorkspaces(state);
 
         const commands = [
           `jcode --no-update -p claude -m ${provider.default_model || "claude-opus-4-7"} provider current`,
           `jcode --no-update -p claude -m ${provider.default_model || "claude-opus-4-7"} run "Reply exactly CLAUDE_GATEWAY_OK"`,
+          `jcode -C "${state.selected_workspace || state.workdir || ""}"`,
+          `jcode-api -C "${state.selected_workspace || state.workdir || ""}"`,
         ];
         $("commands").textContent = commands.join("\n");
 
         if (badge) {
           $("statusPill").className = `pill ${badge.kind}`;
           $("statusPill").textContent = badge.text;
+        }
+      }
+
+      function renderWorkspaces(state) {
+        const list = $("workspaceList");
+        list.innerHTML = "";
+        const selected = (state.selected_workspace || "").toLowerCase();
+        const workspaces = state.workspaces || [];
+        if (!workspaces.length) {
+          const empty = document.createElement("div");
+          empty.className = "workspace-item";
+          empty.innerHTML = `<div class="workspace-path">还没有保存工作区。先填名称和路径，再点“保存工作区”。</div>`;
+          list.appendChild(empty);
+          return;
+        }
+        for (const ws of workspaces) {
+          const item = document.createElement("div");
+          item.className = "workspace-item";
+          const isSelected = (ws.path || "").toLowerCase() === selected;
+          item.innerHTML = `
+            <div class="workspace-head">
+              <div>
+                <div class="workspace-name">${ws.name || ""}</div>
+                <div class="workspace-path">${ws.path || ""}</div>
+              </div>
+              <div class="pill ${isSelected ? "ok" : "warn"}">${isSelected ? "当前工作区" : "可选"}</div>
+            </div>
+            <div class="workspace-actions">
+              <button class="secondary mini" data-action="select" data-path="${ws.path || ""}">设为当前</button>
+              <button class="secondary mini" data-action="launch-jcode" data-path="${ws.path || ""}">启动 jcode</button>
+              <button class="secondary mini" data-action="launch-api" data-path="${ws.path || ""}">启动 jcode-api</button>
+              <button class="secondary mini" data-action="remove" data-path="${ws.path || ""}">移除</button>
+            </div>
+          `;
+          list.appendChild(item);
         }
       }
 
@@ -347,6 +450,48 @@
         renderState(state, { kind: "ok", text: "配置已保存" });
       }
 
+      async function saveWorkspace() {
+        const payload = {
+          name: $("workspaceName").value.trim(),
+          path: $("workspacePath").value.trim(),
+        };
+        await fetchJSON("/api/workspaces/save", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        $("workspaceName").value = "";
+        $("workspacePath").value = "";
+        const state = await loadState();
+        renderState(state, { kind: "ok", text: "工作区已保存" });
+      }
+
+      async function selectWorkspace(path) {
+        await fetchJSON("/api/workspaces/select", {
+          method: "POST",
+          body: JSON.stringify({ path }),
+        });
+        const state = await loadState();
+        renderState(state, { kind: "ok", text: "已切换当前工作区" });
+      }
+
+      async function removeWorkspace(path) {
+        await fetchJSON("/api/workspaces/remove", {
+          method: "POST",
+          body: JSON.stringify({ path }),
+        });
+        const state = await loadState();
+        renderState(state, { kind: "ok", text: "工作区已移除" });
+      }
+
+      async function launchWorkspace(path, shell) {
+        await fetchJSON("/api/workspaces/launch", {
+          method: "POST",
+          body: JSON.stringify({ path, shell }),
+        });
+        $("statusPill").className = "pill ok";
+        $("statusPill").textContent = shell === "jcode-api" ? "已启动 jcode-api" : "已启动 jcode";
+      }
+
       async function validateState() {
         $("statusPill").className = "pill warn";
         $("statusPill").textContent = "正在验证...";
@@ -378,6 +523,28 @@
           $("statusPill").textContent = `读取失败: ${err.message}`;
         })
       );
+
+      $("saveWorkspaceBtn").addEventListener("click", () =>
+        saveWorkspace().catch((err) => {
+          $("statusPill").className = "pill bad";
+          $("statusPill").textContent = `工作区保存失败: ${err.message}`;
+        })
+      );
+
+      $("workspaceList").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) return;
+        const { action, path } = button.dataset;
+        const task =
+          action === "select" ? selectWorkspace(path) :
+          action === "remove" ? removeWorkspace(path) :
+          action === "launch-api" ? launchWorkspace(path, "jcode-api") :
+          launchWorkspace(path, "jcode");
+        task.catch((err) => {
+          $("statusPill").className = "pill bad";
+          $("statusPill").textContent = `工作区操作失败: ${err.message}`;
+        });
+      });
 
       loadState().catch((err) => {
         $("statusPill").className = "pill bad";

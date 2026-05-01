@@ -9,6 +9,9 @@ This tool stays outside the core `jcode` runtime loop and focuses on:
 - editing Claude provider defaults in `~/.jcode/config.toml`
 - setting/removing `ANTHROPIC_API_KEY`
 - validating the active Claude route with exact `jcode` commands
+- saving workspace entries
+- selecting the current workspace
+- launching `jcode` or `jcode-api` in a chosen workspace
 
 It is intended as the first UI-friendly layer for later richer clients.
 
@@ -32,6 +35,8 @@ http://127.0.0.1:8765
 - `ANTHROPIC_API_KEY`
 - provider-current validation
 - smoke-test validation
+- workspace persistence
+- workspace launch actions
 
 ## Why this shape
 

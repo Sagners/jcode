@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
-import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -15,8 +13,10 @@ PORT = 8765
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
 CONFIG_PATH = Path.home() / ".jcode" / "config.toml"
+WORKBENCH_STATE_PATH = Path.home() / ".jcode" / "workbench.json"
 DEFAULT_WORKDIR = Path.home() / "Documents" / "Playground"
 JCODE_BIN = Path.home() / ".cargo" / "bin" / "jcode.exe"
+JCODE_API_BIN = Path.home() / ".cargo" / "bin" / "jcode-api.cmd"
 
 
 def read_file_text(path: Path) -> str:
@@ -27,6 +27,94 @@ def read_file_text(path: Path) -> str:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def normalize_workspace(path_text: str) -> str:
+    raw = str(path_text or "").strip().strip('"').strip("'")
+    if not raw:
+        return ""
+    try:
+        return str(Path(raw).expanduser().resolve())
+    except Exception:
+        return str(Path(raw).expanduser())
+
+
+def read_workbench_state() -> dict[str, Any]:
+    text = read_file_text(WORKBENCH_STATE_PATH)
+    if not text.strip():
+        return {"workspaces": [], "selected_workspace": str(DEFAULT_WORKDIR)}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {"workspaces": [], "selected_workspace": str(DEFAULT_WORKDIR)}
+    workspaces = []
+    for item in data.get("workspaces") or []:
+        path = normalize_workspace(item.get("path") if isinstance(item, dict) else item)
+        if not path:
+            continue
+        workspaces.append(
+            {
+                "name": str(item.get("name") or Path(path).name if isinstance(item, dict) else Path(path).name),
+                "path": path,
+            }
+        )
+    unique = []
+    seen = set()
+    for item in workspaces:
+        key = item["path"].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    selected = normalize_workspace(data.get("selected_workspace") or str(DEFAULT_WORKDIR))
+    return {"workspaces": unique, "selected_workspace": selected}
+
+
+def write_workbench_state(state: dict[str, Any]) -> None:
+    ensure_parent(WORKBENCH_STATE_PATH)
+    WORKBENCH_STATE_PATH.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def upsert_workspace(name: str, path_text: str) -> dict[str, Any]:
+    path = normalize_workspace(path_text)
+    if not path:
+        raise ValueError("Workspace path was empty.")
+    item = {"name": name.strip() or Path(path).name, "path": path}
+    state = read_workbench_state()
+    workspaces = [
+        ws for ws in state["workspaces"] if ws["path"].lower() != path.lower()
+    ]
+    workspaces.append(item)
+    workspaces.sort(key=lambda ws: ws["name"].lower())
+    state["workspaces"] = workspaces
+    state["selected_workspace"] = path
+    write_workbench_state(state)
+    return state
+
+
+def remove_workspace(path_text: str) -> dict[str, Any]:
+    path = normalize_workspace(path_text)
+    state = read_workbench_state()
+    state["workspaces"] = [
+        ws for ws in state["workspaces"] if ws["path"].lower() != path.lower()
+    ]
+    if normalize_workspace(state.get("selected_workspace", "")) == path:
+        state["selected_workspace"] = (
+            state["workspaces"][0]["path"] if state["workspaces"] else str(DEFAULT_WORKDIR)
+        )
+    write_workbench_state(state)
+    return state
+
+
+def select_workspace(path_text: str) -> dict[str, Any]:
+    path = normalize_workspace(path_text)
+    state = read_workbench_state()
+    if path:
+        state["selected_workspace"] = path
+        write_workbench_state(state)
+    return state
 
 
 def read_provider_state() -> dict[str, Any]:
@@ -146,13 +234,17 @@ def masked_secret(secret: str) -> str:
 def read_state() -> dict[str, Any]:
     provider = read_provider_state()
     api_key = windows_read_user_env("ANTHROPIC_API_KEY")
+    workbench = read_workbench_state()
     return {
         "provider": provider,
         "api_key_present": bool(api_key.strip()),
         "api_key_masked": masked_secret(api_key.strip()),
         "config_path": str(CONFIG_PATH),
+        "workbench_state_path": str(WORKBENCH_STATE_PATH),
         "jcode_bin": str(JCODE_BIN),
         "workdir": str(DEFAULT_WORKDIR),
+        "selected_workspace": workbench["selected_workspace"],
+        "workspaces": workbench["workspaces"],
     }
 
 
@@ -178,21 +270,28 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
 def command_preview(state: dict[str, Any]) -> list[str]:
     provider = state["provider"]
     model = provider.get("default_model") or "claude-opus-4-7"
+    selected_workspace = state.get("selected_workspace") or str(DEFAULT_WORKDIR)
     return [
         f'jcode --no-update -p claude -m {model} provider current',
         f'jcode --no-update -p claude -m {model} run "Reply exactly CLAUDE_GATEWAY_OK"',
+        f'jcode -C "{selected_workspace}"',
+        f'jcode-api -C "{selected_workspace}"',
     ]
 
 
-def run_command(args: list[str]) -> dict[str, Any]:
+def run_command(args: list[str], cwd: str | None = None) -> dict[str, Any]:
     env = os.environ.copy()
     api_key = windows_read_user_env("ANTHROPIC_API_KEY").strip()
     if api_key:
         env["ANTHROPIC_API_KEY"] = api_key
 
+    actual_cwd = Path(cwd) if cwd else DEFAULT_WORKDIR
+    if not actual_cwd.exists():
+        actual_cwd = Path.home()
+
     completed = subprocess.run(
         args,
-        cwd=str(DEFAULT_WORKDIR if DEFAULT_WORKDIR.exists() else Path.home()),
+        cwd=str(actual_cwd),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -235,6 +334,33 @@ def validate_state() -> dict[str, Any]:
     }
 
 
+def launch_workspace(payload: dict[str, Any]) -> dict[str, Any]:
+    path = normalize_workspace(payload.get("path") or read_state().get("selected_workspace"))
+    if not path:
+        raise ValueError("No workspace selected.")
+    shell = payload.get("shell") or "jcode"
+    if shell == "jcode-api":
+        cmd = str(JCODE_API_BIN if JCODE_API_BIN.exists() else JCODE_BIN)
+    else:
+        cmd = str(JCODE_BIN)
+
+    args = []
+    if cmd.lower().endswith(".cmd"):
+        args = ["/c", cmd, "-C", path]
+        file_path = "cmd.exe"
+    else:
+        args = ["-NoExit", "-Command", f'& "{cmd}" -C "{path}"']
+        file_path = "powershell.exe"
+
+    subprocess.Popen(args=[file_path, *args], cwd=path)
+    select_workspace(path)
+    return {
+        "launched": True,
+        "path": path,
+        "shell": shell,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "JCodeConfigWorkbench/0.1"
 
@@ -257,6 +383,27 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/validate":
             self.send_json(validate_state())
+            return
+        if self.path == "/api/workspaces/save":
+            payload = self.read_json()
+            self.send_json(
+                upsert_workspace(
+                    str(payload.get("name") or ""),
+                    str(payload.get("path") or ""),
+                )
+            )
+            return
+        if self.path == "/api/workspaces/remove":
+            payload = self.read_json()
+            self.send_json(remove_workspace(str(payload.get("path") or "")))
+            return
+        if self.path == "/api/workspaces/select":
+            payload = self.read_json()
+            self.send_json(select_workspace(str(payload.get("path") or "")))
+            return
+        if self.path == "/api/workspaces/launch":
+            payload = self.read_json()
+            self.send_json(launch_workspace(payload))
             return
         self.send_error(404, "Not found")
 
