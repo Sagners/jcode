@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jcode Claude Gateway Workbench</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #111827;
+        --panel-2: #172033;
+        --line: rgba(255, 255, 255, 0.08);
+        --text: #f3f4f6;
+        --muted: #94a3b8;
+        --accent: #7dd3fc;
+        --accent-2: #34d399;
+        --danger: #fb7185;
+        --warn: #fbbf24;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(56, 189, 248, 0.2), transparent 30%),
+          radial-gradient(circle at top right, rgba(52, 211, 153, 0.16), transparent 25%),
+          linear-gradient(180deg, #0b1020 0%, var(--bg) 45%, #090d13 100%);
+        min-height: 100vh;
+      }
+
+      .shell {
+        width: min(1200px, calc(100% - 32px));
+        margin: 32px auto;
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 20px;
+      }
+
+      .panel {
+        background: linear-gradient(180deg, rgba(23, 32, 51, 0.92), rgba(13, 17, 23, 0.96));
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .hero {
+        padding: 28px 28px 12px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 34px;
+        line-height: 1.05;
+      }
+
+      .sub {
+        color: var(--muted);
+        line-height: 1.6;
+        max-width: 70ch;
+      }
+
+      .grid {
+        padding: 16px 28px 28px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+
+      label {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input {
+        width: 100%;
+        border: 1px solid rgba(125, 211, 252, 0.14);
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.72);
+        color: var(--text);
+        padding: 14px 16px;
+        font-size: 14px;
+        outline: none;
+      }
+
+      input:focus {
+        border-color: rgba(125, 211, 252, 0.55);
+        box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12);
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: linear-gradient(135deg, var(--accent), #60a5fa);
+        color: #04121c;
+      }
+
+      .secondary {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+      }
+
+      .right {
+        padding: 28px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .stat-card,
+      .log-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 18px;
+      }
+
+      .stat-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .stat-row:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+
+      .k {
+        color: var(--muted);
+      }
+
+      .v {
+        text-align: right;
+        font-family: Consolas, "SFMono-Regular", monospace;
+        font-size: 13px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .ok { background: rgba(52, 211, 153, 0.12); color: var(--accent-2); }
+      .warn { background: rgba(251, 191, 36, 0.12); color: var(--warn); }
+      .bad { background: rgba(251, 113, 133, 0.12); color: var(--danger); }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        line-height: 1.55;
+        font-family: Consolas, "SFMono-Regular", monospace;
+        color: #dbeafe;
+      }
+
+      .mono {
+        font-family: Consolas, "SFMono-Regular", monospace;
+      }
+
+      @media (max-width: 920px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="panel">
+        <div class="hero">
+          <div class="eyebrow">Claude Gateway</div>
+          <h1>Jcode Config Workbench</h1>
+          <div class="sub">
+            这个工作台专门服务 Claude 第三方网关配置。它不会侵入 jcode 核心 agent
+            循环，只负责管理配置、写入 API key、验证 provider 路由，并生成你日常真正会用的命令。
+          </div>
+        </div>
+        <div class="grid">
+          <div class="field">
+            <label for="defaultProvider">默认 Provider</label>
+            <input id="defaultProvider" value="claude" />
+          </div>
+          <div class="field">
+            <label for="defaultModel">默认模型</label>
+            <input id="defaultModel" placeholder="claude-opus-4-7" />
+          </div>
+          <div class="field">
+            <label for="apiBase">Anthropic API Base</label>
+            <input id="apiBase" placeholder="http://47.83.126.28:23000" />
+          </div>
+          <div class="field">
+            <label for="apiKey">Anthropic API Key</label>
+            <input id="apiKey" type="password" placeholder="输入新 key 时才会覆盖现有值" />
+          </div>
+          <div class="actions">
+            <button class="primary" id="saveBtn">保存配置</button>
+            <button class="secondary" id="validateBtn">验证链路</button>
+            <button class="secondary" id="reloadBtn">重新读取</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel right">
+        <div class="stat-card">
+          <div id="statusPill" class="pill warn">等待读取状态</div>
+          <div class="stat-row">
+            <div class="k">配置文件</div>
+            <div class="v" id="configPath"></div>
+          </div>
+          <div class="stat-row">
+            <div class="k">jcode 路径</div>
+            <div class="v" id="jcodeBin"></div>
+          </div>
+          <div class="stat-row">
+            <div class="k">工作目录</div>
+            <div class="v" id="workdir"></div>
+          </div>
+          <div class="stat-row">
+            <div class="k">API Key</div>
+            <div class="v" id="apiKeyState"></div>
+          </div>
+        </div>
+
+        <div class="log-card">
+          <div class="k" style="margin-bottom:10px;">建议命令</div>
+          <pre id="commands"></pre>
+        </div>
+
+        <div class="log-card">
+          <div class="k" style="margin-bottom:10px;">验证输出</div>
+          <pre id="logs">尚未执行验证。</pre>
+        </div>
+      </aside>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      async function fetchJSON(url, options = {}) {
+        const res = await fetch(url, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        return res.json();
+      }
+
+      function renderState(state, badge = null) {
+        const provider = state.provider || {};
+        $("defaultProvider").value = provider.default_provider || "claude";
+        $("defaultModel").value = provider.default_model || "";
+        $("apiBase").value = provider.anthropic_api_base || "";
+        $("configPath").textContent = state.config_path || "";
+        $("jcodeBin").textContent = state.jcode_bin || "";
+        $("workdir").textContent = state.workdir || "";
+        $("apiKeyState").textContent = state.api_key_present ? state.api_key_masked : "未设置";
+
+        const commands = [
+          `jcode --no-update -p claude -m ${provider.default_model || "claude-opus-4-7"} provider current`,
+          `jcode --no-update -p claude -m ${provider.default_model || "claude-opus-4-7"} run "Reply exactly CLAUDE_GATEWAY_OK"`,
+        ];
+        $("commands").textContent = commands.join("\n");
+
+        if (badge) {
+          $("statusPill").className = `pill ${badge.kind}`;
+          $("statusPill").textContent = badge.text;
+        }
+      }
+
+      function renderLogs(result) {
+        if (!result) {
+          $("logs").textContent = "尚未执行验证。";
+          return;
+        }
+        const chunks = [];
+        for (const item of result.results || []) {
+          chunks.push(`$ ${item.command}`);
+          chunks.push(`exit=${item.exit_code}`);
+          if (item.stdout) chunks.push(item.stdout.trimEnd());
+          if (item.stderr) chunks.push(item.stderr.trimEnd());
+          chunks.push("");
+        }
+        $("logs").textContent = chunks.join("\n");
+      }
+
+      async function loadState() {
+        const state = await fetchJSON("/api/state");
+        renderState(state, { kind: "ok", text: "已读取当前配置" });
+        return state;
+      }
+
+      async function saveState() {
+        const payload = {
+          provider: {
+            default_provider: $("defaultProvider").value.trim(),
+            default_model: $("defaultModel").value.trim(),
+            anthropic_api_base: $("apiBase").value.trim(),
+          },
+          anthropic_api_key: $("apiKey").value.trim(),
+        };
+        const state = await fetchJSON("/api/save", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        $("apiKey").value = "";
+        renderState(state, { kind: "ok", text: "配置已保存" });
+      }
+
+      async function validateState() {
+        $("statusPill").className = "pill warn";
+        $("statusPill").textContent = "正在验证...";
+        const result = await fetchJSON("/api/validate", { method: "POST" });
+        renderState(result.state, {
+          kind: result.success ? "ok" : "bad",
+          text: result.success ? "验证通过" : "验证失败",
+        });
+        renderLogs(result);
+      }
+
+      $("saveBtn").addEventListener("click", () =>
+        saveState().catch((err) => {
+          $("statusPill").className = "pill bad";
+          $("statusPill").textContent = `保存失败: ${err.message}`;
+        })
+      );
+
+      $("validateBtn").addEventListener("click", () =>
+        validateState().catch((err) => {
+          $("statusPill").className = "pill bad";
+          $("statusPill").textContent = `验证失败: ${err.message}`;
+        })
+      );
+
+      $("reloadBtn").addEventListener("click", () =>
+        loadState().catch((err) => {
+          $("statusPill").className = "pill bad";
+          $("statusPill").textContent = `读取失败: ${err.message}`;
+        })
+      );
+
+      loadState().catch((err) => {
+        $("statusPill").className = "pill bad";
+        $("statusPill").textContent = `初始化失败: ${err.message}`;
+      });
+    </script>
+  </body>
+  </html>
