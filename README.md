@@ -25,6 +25,28 @@ Built for multi-session workflows, infinite customizability, and performance.
 
 ---
 
+## Fork Variant And Collaboration
+
+This checkout is maintained as a fork-oriented customization of upstream `jcode`,
+not as a direct push target for the upstream repository.
+
+The intended collaboration model is:
+
+- `upstream` points to the official repository: `https://github.com/1jehuang/jcode.git`
+- `origin` points to the fork used for local/customized work
+- pull new official code from `upstream`
+- push local customization work to `origin`
+- keep fork-specific behavior documented and reviewable instead of silently drifting from upstream
+
+In practice, treat this repository as a maintained local delta on top of upstream.
+When upstream moves, re-check whether the local customization is still needed,
+still correct, or should be redesigned.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the exact collaboration workflow used
+in this fork.
+
+---
+
 <div align="center">
 
 ## Installation

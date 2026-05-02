@@ -2,6 +2,43 @@
 
 Thanks for contributing.
 
+## Fork collaboration workflow
+
+This repository is currently operated as a fork-customized variant of upstream
+`jcode`.
+
+That means the default expectation is:
+
+- `upstream` is the official source repository
+- `origin` is the writable fork for this customization line
+- fetch and pull from `upstream`
+- push new work to `origin`
+- do not push directly to `upstream`
+
+Recommended command flow:
+
+```bash
+# Refresh official upstream state
+git fetch upstream --prune
+git pull --ff-only upstream master
+
+# Publish local customized work
+git push origin master
+```
+
+If you are preparing a larger upstream sync, use a short review loop first:
+
+- inspect `git log --oneline upstream/master..HEAD` to see the local delta
+- inspect `git log --oneline HEAD..upstream/master` to see incoming upstream work
+- re-check fork-specific surfaces before and after the sync
+- prefer small, explainable maintenance commits over giant reconciliation diffs
+
+For this fork, changes should stay explicit about which side they belong to:
+
+- upstream-aligned fixes should be easy to rebase or drop if upstream subsumes them
+- fork-only behavior should be documented in code or docs so later agents know it is intentional
+- if a local customization starts fighting upstream architecture too hard, redesign it rather than piling on compatibility hacks
+
 ## Issues vs pull requests
 
 If the problem is easy for me to reproduce, please prefer opening a GitHub issue. A clear issue with reproduction steps, expected behavior, actual behavior, logs, screenshots, or traces is usually the fastest path to a fix.
