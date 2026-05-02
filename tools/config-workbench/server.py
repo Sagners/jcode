@@ -548,6 +548,79 @@ def workspace_match(path_text: str, workspaces: list[dict[str, Any]]) -> dict[st
     return None
 
 
+def is_crashed_status(status_text: str) -> bool:
+    return str(status_text or "").strip().lower() == "crashed"
+
+
+def read_workspace_overview(
+    sessions: list[dict[str, Any]],
+    workspaces: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    entries: dict[str, dict[str, Any]] = {}
+    for workspace in workspaces:
+        path = normalize_workspace(workspace.get("path") or "")
+        if not path:
+            continue
+        entries[path.lower()] = {
+            "name": str(workspace.get("name") or Path(path).name),
+            "path": path,
+            "registered": True,
+            "exists": Path(path).exists(),
+            "session_count": 0,
+            "active_session_count": 0,
+            "crashed_session_count": 0,
+            "latest_session_id": "",
+            "latest_session_name": "",
+            "latest_status_text": "",
+            "latest_relative_last_active": "",
+            "latest_model": "",
+        }
+
+    for session in sessions:
+        path = normalize_workspace(session.get("workspace_path") or session.get("working_dir") or "")
+        if not path:
+            continue
+        key = path.lower()
+        if key not in entries:
+            entries[key] = {
+                "name": Path(path).name or path,
+                "path": path,
+                "registered": False,
+                "exists": Path(path).exists(),
+                "session_count": 0,
+                "active_session_count": 0,
+                "crashed_session_count": 0,
+                "latest_session_id": "",
+                "latest_session_name": "",
+                "latest_status_text": "",
+                "latest_relative_last_active": "",
+                "latest_model": "",
+            }
+        item = entries[key]
+        item["session_count"] += 1
+        if session.get("is_running"):
+            item["active_session_count"] += 1
+        if is_crashed_status(str(session.get("status_text") or "")):
+            item["crashed_session_count"] += 1
+        if not item["latest_session_id"]:
+            item["latest_session_id"] = str(session.get("session_id") or "")
+            item["latest_session_name"] = str(session.get("short_name") or "")
+            item["latest_status_text"] = str(session.get("status_text") or "")
+            item["latest_relative_last_active"] = str(session.get("relative_last_active") or "")
+            item["latest_model"] = str(session.get("model") or "")
+
+    items = list(entries.values())
+    items.sort(
+        key=lambda item: (
+            0 if item.get("registered") else 1,
+            -int(item.get("active_session_count") or 0),
+            -int(item.get("session_count") or 0),
+            str(item.get("name") or "").lower(),
+        )
+    )
+    return items
+
+
 def read_operations_dashboard() -> dict[str, Any]:
     sessions = read_session_records(limit=12)
     pid_candidates = [item.get("last_pid") for item in sessions]
@@ -566,27 +639,34 @@ def read_operations_dashboard() -> dict[str, Any]:
         session["workspace_registered"] = bool(matched_workspace)
         session["workspace_name"] = str(matched_workspace.get("name") or "") if matched_workspace else ""
         session["workspace_path"] = str(matched_workspace.get("path") or "") if matched_workspace else working_dir
+        session["can_resume"] = bool(session.get("session_id") and session.get("workspace_path"))
         active_sessions.append(session)
     processes = sorted(process_info.values(), key=lambda item: item["pid"], reverse=True)
     logs = read_recent_logs()
     state = read_state()
     gateway = gateway_health()
+    workspace_overview = read_workspace_overview(active_sessions, workspaces)
+    crashed_session_count = sum(1 for item in active_sessions if is_crashed_status(str(item.get("status_text") or "")))
     return {
         "summary": {
             "active_session_count": sum(1 for item in active_sessions if item.get("is_running")),
             "tracked_session_count": len(active_sessions),
             "active_pid_count": len(processes),
+            "crashed_session_count": crashed_session_count,
             "gateway_enabled": bool(state["gateway"].get("enabled")),
             "gateway_ok": bool(gateway.get("ok")),
             "latest_log_time": logs.get("updated_at"),
             "telemetry_active_count": len(list(TELEMETRY_ACTIVE_SESSIONS_PATH.glob("*.active"))) if TELEMETRY_ACTIVE_SESSIONS_PATH.exists() else 0,
             "registered_workspace_count": len(workspaces),
+            "workspace_overview_count": len(workspace_overview),
+            "orphan_workspace_count": sum(1 for item in workspace_overview if not item.get("registered")),
             "selected_workspace": state.get("selected_workspace") or "",
             "provider": state["provider"].get("default_provider") or "",
             "model": state["provider"].get("default_model") or "",
         },
         "sessions": active_sessions,
         "processes": processes,
+        "workspaces": workspace_overview,
         "logs": logs,
         "last_validation": workbench.get("last_validation"),
     }
@@ -840,6 +920,29 @@ def launch_workspace(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resume_session(payload: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(payload.get("session_id") or "").strip()
+    if not session_id:
+        raise ValueError("No session_id supplied.")
+    path = normalize_workspace(payload.get("path") or read_state().get("selected_workspace"))
+    if not path:
+        raise ValueError("No workspace selected.")
+    if not Path(path).exists():
+        raise ValueError(f"Workspace does not exist: {path}")
+    command = f'& "{JCODE_BIN}" -C "{path}" --resume "{session_id}"'
+    subprocess.Popen(
+        args=["powershell.exe", "-NoExit", "-Command", command],
+        cwd=path,
+    )
+    select_workspace(path)
+    return {
+        "launched": True,
+        "path": path,
+        "session_id": session_id,
+        "mode": "resume",
+    }
+
+
 def reveal_path(payload: dict[str, Any]) -> dict[str, Any]:
     path = normalize_workspace(payload.get("path") or "")
     if not path:
@@ -918,6 +1021,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/workspaces/launch":
                 payload = self.read_json()
                 self.send_json(launch_workspace(payload))
+                return
+            if self.path == "/api/sessions/resume":
+                payload = self.read_json()
+                self.send_json(resume_session(payload))
                 return
             if self.path == "/api/open-path":
                 payload = self.read_json()

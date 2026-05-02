@@ -43,7 +43,9 @@ http://127.0.0.1:8765
 - operations dashboard for recent sessions
 - active PID inspection for tracked jcode sessions
 - session-side quick actions for open/select/launch flows
+- session resume launch via `jcode --resume <session_id>`
 - operations search and auto-refresh
+- workspace health overview across registered and orphan session paths
 - latest log tail and validation snapshot
 - default provider
 - default model
@@ -87,7 +89,7 @@ The intended daily flow is now:
 1. land on `Operations`
 2. filter to the session, model, provider, or workspace path you care about
 3. inspect the selected session/process in the right-hand detail panel
-4. jump directly to `打开目录`, `设为当前`, `启动 jcode`, or `启动 jcode-api`
+4. jump directly to `恢复会话`, `打开目录`, `设为当前`, `启动 jcode`, or `启动 jcode-api`
 5. only move into `Provider` or `Gateway` when you need to change configuration
 
 That keeps the workbench in the control-plane lane instead of trying to duplicate

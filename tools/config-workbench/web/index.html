@@ -243,7 +243,7 @@
 
       .summary-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 12px;
       }
 
@@ -607,6 +607,13 @@
               </div>
             </div>
             <div class="summary-grid" id="summaryGrid"></div>
+            <div class="panel">
+              <div class="item-head">
+                <div class="title">工作区健康概览</div>
+                <span class="badge warn" id="workspaceOverviewBadge">0</span>
+              </div>
+              <div class="list" id="workspaceOverviewList"></div>
+            </div>
             <div class="operations-grid">
               <div class="panel">
                 <div class="item-head">
@@ -991,6 +998,7 @@
         operationsCache = data;
         renderSummary(data.summary || {});
         renderOpsStrip(data.summary || {});
+        renderWorkspaceOverview(data.workspaces || []);
         renderSessions(data.sessions || []);
         renderProcesses(data.processes || []);
         renderLogs(data.logs || {});
@@ -1001,7 +1009,9 @@
         const grid = $("summaryGrid");
         const items = [
           ["活跃会话", summary.active_session_count ?? 0, `${summary.tracked_session_count ?? 0} tracked`],
+          ["崩溃会话", summary.crashed_session_count ?? 0, "需要人工恢复或重开"],
           ["活跃 PID", summary.active_pid_count ?? 0, `${summary.telemetry_active_count ?? 0} telemetry marks`],
+          ["工作区", summary.workspace_overview_count ?? 0, `${summary.registered_workspace_count ?? 0} registered / ${summary.orphan_workspace_count ?? 0} orphan`],
           ["Gateway", summary.gateway_ok ? "online" : (summary.gateway_enabled ? "offline" : "disabled"), summary.gateway_enabled ? "enabled" : "config off"],
           ["最新日志", summary.latest_log_time ? summary.latest_log_time.replace("T", " ").replace("Z", " UTC") : "none", "tail from ~/.jcode/logs"],
         ];
@@ -1012,6 +1022,62 @@
             <div class="meta">${escapeHTML(meta)}</div>
           </div>
         `).join("");
+      }
+
+      function renderWorkspaceOverview(workspaces) {
+        const filtered = workspaces.filter((workspace) => {
+          if (!opsQuery) return true;
+          const haystack = [
+            workspace.name,
+            workspace.path,
+            workspace.latest_session_name,
+            workspace.latest_status_text,
+            workspace.latest_model,
+          ].map(normalizeText).join(" ");
+          return haystack.includes(opsQuery);
+        });
+        $("workspaceOverviewBadge").textContent = `${filtered.length}/${workspaces.length}`;
+        const list = $("workspaceOverviewList");
+        list.innerHTML = "";
+        if (!filtered.length) {
+          list.innerHTML = '<div class="item"><div class="path">没有匹配的工作区概览。</div></div>';
+          return;
+        }
+        for (const workspace of filtered) {
+          const item = document.createElement("div");
+          item.className = "item";
+          const latestMeta = [
+            workspace.latest_session_name ? `latest: ${workspace.latest_session_name}` : "",
+            workspace.latest_status_text ? `status: ${workspace.latest_status_text}` : "",
+            workspace.latest_relative_last_active ? `active: ${workspace.latest_relative_last_active}` : "",
+          ].filter(Boolean).join(" | ");
+          item.innerHTML = `
+            <div class="item-head">
+              <div>
+                <div class="title">${escapeHTML(workspace.name || pathTail(workspace.path || ""))}</div>
+                <div class="path">${escapeHTML(workspace.path || "")}</div>
+              </div>
+              <span class="badge ${workspace.registered ? "ok" : "warn"}">${workspace.registered ? "registered" : "orphan"}</span>
+            </div>
+            <div class="chip-row">
+              <span class="badge ${workspace.exists ? "ok" : "bad"}">${workspace.exists ? "目录存在" : "目录缺失"}</span>
+              <span class="badge ${workspace.active_session_count ? "ok" : "warn"}">${workspace.active_session_count || 0} live</span>
+              <span class="badge ${workspace.crashed_session_count ? "bad" : "ok"}">${workspace.crashed_session_count || 0} crashed</span>
+              <span class="badge warn">${workspace.session_count || 0} sessions</span>
+            </div>
+            <div class="cluster">
+              <div class="meta">${escapeHTML(latestMeta || "还没有最近会话摘要。")}</div>
+              <div class="meta">model: ${escapeHTML(workspace.latest_model || "-")}</div>
+            </div>
+            <div class="action-row">
+              <button class="mini-button" data-workspace-action="select" data-path="${escapeAttr(workspace.path || "")}">设为当前</button>
+              <button class="mini-button" data-workspace-action="reveal" data-path="${escapeAttr(workspace.path || "")}">打开目录</button>
+              <button class="mini-button" data-workspace-action="launch-jcode" data-path="${escapeAttr(workspace.path || "")}">启动 jcode</button>
+              <button class="mini-button" data-workspace-action="launch-api" data-path="${escapeAttr(workspace.path || "")}">启动 jcode-api</button>
+            </div>
+          `;
+          list.appendChild(item);
+        }
       }
 
       function renderSessions(sessions) {
@@ -1052,6 +1118,7 @@
             <div class="chip-row">
               <span class="badge ${session.workspace_registered ? "ok" : "warn"}">${session.workspace_registered ? `workspace ${escapeHTML(session.workspace_name || pathTail(session.workspace_path || ""))}` : "workspace 未登记"}</span>
               <span class="badge ${session.working_dir_exists ? "ok" : "bad"}">${session.working_dir_exists ? "目录存在" : "目录缺失"}</span>
+              ${session.status_text === "Crashed" ? `<span class="badge bad">需要恢复</span>` : ""}
             </div>
             <div class="cluster">
               <div class="meta">model: ${escapeHTML(session.model || "")} | provider: ${escapeHTML(session.provider_key || "")}</div>
@@ -1059,6 +1126,7 @@
               <div>${escapeHTML(session.assistant_preview || "还没有 assistant 输出摘要。")}</div>
             </div>
             <div class="action-row">
+              ${session.can_resume ? `<button class="mini-button" data-session-action="resume" data-path="${escapeAttr(session.workspace_path || session.working_dir || "")}" data-session-id="${escapeAttr(session.session_id || "")}">恢复会话</button>` : ""}
               <button class="mini-button" data-session-action="select" data-path="${escapeAttr(session.workspace_path || session.working_dir || "")}">设为当前</button>
               <button class="mini-button" data-session-action="reveal" data-path="${escapeAttr(session.working_dir || session.workspace_path || "")}">打开目录</button>
               <button class="mini-button" data-session-action="launch-jcode" data-path="${escapeAttr(session.workspace_path || session.working_dir || "")}">启动 jcode</button>
@@ -1128,6 +1196,9 @@
             `status: ${session.status_text || ""}`,
             `status_detail: ${session.status_detail || ""}`,
             `running: ${session.is_running ? "yes" : "no"}`,
+            `can_resume: ${session.can_resume ? "yes" : "no"}`,
+            `workspace_registered: ${session.workspace_registered ? "yes" : "no"}`,
+            `workspace_path: ${session.workspace_path || ""}`,
             `provider: ${session.provider_key || ""}`,
             `model: ${session.model || ""}`,
             `working_dir: ${session.working_dir || ""}`,
@@ -1185,6 +1256,14 @@
         await fetchJSON("/api/open-path", {
           method: "POST",
           body: JSON.stringify({ path }),
+        });
+      }
+
+      async function resumeSession(sessionId, path) {
+        if (!sessionId) throw new Error("没有可恢复的 session_id");
+        await fetchJSON("/api/sessions/resume", {
+          method: "POST",
+          body: JSON.stringify({ session_id: sessionId, path }),
         });
       }
 
@@ -1306,12 +1385,17 @@
         setStatus("ok", action === "launch-api" ? "已启动 jcode-api" : "已启动 jcode");
       }
 
-      async function sessionAction(action, path, name = "") {
+      async function sessionAction(action, path, name = "", sessionId = "") {
         if (action === "register") {
           $("workspaceName").value = name || pathTail(path);
           $("workspacePath").value = path || "";
           switchSection("workspaces");
           setStatus("warn", "已带入工作区表单，请确认后保存");
+          return;
+        }
+        if (action === "resume") {
+          await resumeSession(sessionId, path);
+          setStatus("ok", `已启动恢复会话 ${sessionId}`);
           return;
         }
         await workspaceAction(action, path);
@@ -1380,6 +1464,7 @@
       $("opsSearch").addEventListener("input", (event) => {
         opsQuery = normalizeText(event.target.value);
         if (operationsCache) {
+          renderWorkspaceOverview(operationsCache.workspaces || []);
           renderSessions(operationsCache.sessions || []);
           renderProcesses(operationsCache.processes || []);
         }
@@ -1394,10 +1479,23 @@
         );
       });
 
+      $("workspaceOverviewList").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-workspace-action]");
+        if (!button) return;
+        workspaceAction(button.dataset.workspaceAction, button.dataset.path).catch((err) =>
+          setStatus("bad", `工作区概览操作失败: ${err.message}`)
+        );
+      });
+
       $("sessionList").addEventListener("click", (event) => {
         const button = event.target.closest("button[data-session-action]");
         if (button) {
-          sessionAction(button.dataset.sessionAction, button.dataset.path, button.dataset.name || "").catch((err) =>
+          sessionAction(
+            button.dataset.sessionAction,
+            button.dataset.path,
+            button.dataset.name || "",
+            button.dataset.sessionId || "",
+          ).catch((err) =>
             setStatus("bad", `会话操作失败: ${err.message}`)
           );
           return;
