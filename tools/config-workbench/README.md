@@ -45,7 +45,9 @@ http://127.0.0.1:8765
 - session-side quick actions for open/select/launch flows
 - session resume launch via `jcode --resume <session_id>`
 - operations search and auto-refresh
+- crashed-session filter for recovery-focused triage
 - workspace health overview across registered and orphan session paths
+- recent resume history persisted in `~/.jcode/workbench.json`
 - latest log tail and validation snapshot
 - default provider
 - default model
@@ -88,9 +90,19 @@ The intended daily flow is now:
 
 1. land on `Operations`
 2. filter to the session, model, provider, or workspace path you care about
-3. inspect the selected session/process in the right-hand detail panel
-4. jump directly to `恢复会话`, `打开目录`, `设为当前`, `启动 jcode`, or `启动 jcode-api`
-5. only move into `Provider` or `Gateway` when you need to change configuration
+3. if needed, switch on the crashed-only filter to focus recovery work
+4. inspect the selected session/process in the right-hand detail panel
+5. jump directly to `恢复会话`, `打开目录`, `设为当前`, `启动 jcode`, or `启动 jcode-api`
+6. register orphan workspaces in one click when you want them tracked persistently
+7. only move into `Provider` or `Gateway` when you need to change configuration
 
 That keeps the workbench in the control-plane lane instead of trying to duplicate
 the main terminal UI.
+
+## Orphan workspace
+
+An orphan workspace is a path discovered from persisted session records that is
+not yet present in the workbench's saved workspace list.
+
+In practice that means `jcode` has history for the folder, but the workbench is
+not yet tracking it as a first-class workspace entry.

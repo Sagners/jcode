@@ -57,6 +57,7 @@ def read_workbench_state() -> dict[str, Any]:
             "workspaces": [],
             "selected_workspace": str(DEFAULT_WORKDIR),
             "last_validation": None,
+            "recent_resumes": [],
         }
     try:
         data = json.loads(text)
@@ -65,6 +66,7 @@ def read_workbench_state() -> dict[str, Any]:
             "workspaces": [],
             "selected_workspace": str(DEFAULT_WORKDIR),
             "last_validation": None,
+            "recent_resumes": [],
         }
     workspaces = []
     for item in data.get("workspaces") or []:
@@ -86,10 +88,27 @@ def read_workbench_state() -> dict[str, Any]:
         seen.add(key)
         unique.append(item)
     selected = normalize_workspace(data.get("selected_workspace") or str(DEFAULT_WORKDIR))
+    recent_resumes = []
+    for item in data.get("recent_resumes") or []:
+        if not isinstance(item, dict):
+            continue
+        session_id = str(item.get("session_id") or "").strip()
+        workspace_path = normalize_workspace(item.get("workspace_path") or "")
+        if not session_id or not workspace_path:
+            continue
+        recent_resumes.append(
+            {
+                "session_id": session_id,
+                "workspace_path": workspace_path,
+                "short_name": str(item.get("short_name") or ""),
+                "launched_at": str(item.get("launched_at") or ""),
+            }
+        )
     return {
         "workspaces": unique,
         "selected_workspace": selected,
         "last_validation": data.get("last_validation"),
+        "recent_resumes": recent_resumes[:12],
     }
 
 
@@ -98,6 +117,27 @@ def write_workbench_state(state: dict[str, Any]) -> None:
     WORKBENCH_STATE_PATH.write_text(
         json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def append_recent_resume(session_id: str, workspace_path: str, short_name: str = "") -> dict[str, Any]:
+    state = read_workbench_state()
+    item = {
+        "session_id": session_id,
+        "workspace_path": normalize_workspace(workspace_path),
+        "short_name": short_name.strip(),
+        "launched_at": iso_now(),
+    }
+    others = [
+        entry
+        for entry in state.get("recent_resumes") or []
+        if not (
+            str(entry.get("session_id") or "") == item["session_id"]
+            and str(entry.get("workspace_path") or "").lower() == item["workspace_path"].lower()
+        )
+    ]
+    state["recent_resumes"] = [item, *others][:12]
+    write_workbench_state(state)
+    return item
 
 
 def upsert_workspace(name: str, path_text: str) -> dict[str, Any]:
@@ -647,6 +687,20 @@ def read_operations_dashboard() -> dict[str, Any]:
     gateway = gateway_health()
     workspace_overview = read_workspace_overview(active_sessions, workspaces)
     crashed_session_count = sum(1 for item in active_sessions if is_crashed_status(str(item.get("status_text") or "")))
+    session_map = {str(item.get("session_id") or ""): item for item in active_sessions}
+    recent_resumes = []
+    for entry in workbench.get("recent_resumes") or []:
+        session = session_map.get(str(entry.get("session_id") or ""))
+        recent_resumes.append(
+            {
+                **entry,
+                "status_text": str(session.get("status_text") or "") if session else "",
+                "relative_last_active": str(session.get("relative_last_active") or "") if session else "",
+                "model": str(session.get("model") or "") if session else "",
+                "is_running": bool(session.get("is_running")) if session else False,
+                "workspace_registered": bool(session.get("workspace_registered")) if session else bool(workspace_match(entry.get("workspace_path") or "", workspaces)),
+            }
+        )
     return {
         "summary": {
             "active_session_count": sum(1 for item in active_sessions if item.get("is_running")),
@@ -663,10 +717,12 @@ def read_operations_dashboard() -> dict[str, Any]:
             "selected_workspace": state.get("selected_workspace") or "",
             "provider": state["provider"].get("default_provider") or "",
             "model": state["provider"].get("default_model") or "",
+            "recent_resume_count": len(recent_resumes),
         },
         "sessions": active_sessions,
         "processes": processes,
         "workspaces": workspace_overview,
+        "recent_resumes": recent_resumes,
         "logs": logs,
         "last_validation": workbench.get("last_validation"),
     }
@@ -689,6 +745,7 @@ def read_state() -> dict[str, Any]:
         "selected_workspace": workbench["selected_workspace"],
         "workspaces": workbench["workspaces"],
         "last_validation": workbench.get("last_validation"),
+        "recent_resumes": workbench.get("recent_resumes") or [],
     }
 
 
@@ -935,11 +992,17 @@ def resume_session(payload: dict[str, Any]) -> dict[str, Any]:
         cwd=path,
     )
     select_workspace(path)
+    resume_record = append_recent_resume(
+        session_id=session_id,
+        workspace_path=path,
+        short_name=str(payload.get("short_name") or ""),
+    )
     return {
         "launched": True,
         "path": path,
         "session_id": session_id,
         "mode": "resume",
+        "resume_record": resume_record,
     }
 
 
