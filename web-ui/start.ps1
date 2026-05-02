@@ -4,9 +4,13 @@
 #
 # Starts jcode server and opens web UI in browser
 
+# Note: For development server on port 9527, use: python -m http.server 9527
+# Or run: .\dev-server.bat
+
 param(
     [string]$WebUiPath = "$PSScriptRoot",
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [int]$Port = 9527
 )
 
 $ErrorActionPreference = "Stop"
