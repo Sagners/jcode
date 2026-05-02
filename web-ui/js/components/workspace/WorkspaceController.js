@@ -11,8 +11,9 @@ const WorkspaceController = {
     }
 
     this.initLaneNavigator();
-    this.bindKeyboardShortcuts();
+    this.initToolbar();
     this.loadWorkspace();
+    this.setupKeyboardShortcuts();
   },
 
   initLaneNavigator() {
@@ -275,30 +276,196 @@ const WorkspaceController = {
     }
   },
 
-  bindKeyboardShortcuts() {
+  setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
-      // Ctrl/Cmd + N: New lane
-      if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const ctrlKey = isMac ? e.metaKey : e.ctrlKey;
+
+      if (!ctrlKey) return;
+
+      // Ctrl/Cmd+L: New Lane
+      if ((e.key === 'l' || e.key === 'L') && !e.shiftKey) {
         e.preventDefault();
-        this.handleAddLane();
+        const name = prompt('Lane name:', `Lane ${LaneStore.lanes.length + 1}`);
+        if (name) {
+          const lane = LaneStore.createLane(name);
+          this.createDefaultSurfaceForLane(lane.id);
+        }
       }
 
-      // Ctrl/Cmd + 1-9: Switch lanes
-      if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+      // Ctrl/Cmd+N: New Session Surface
+      if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
-        const laneIndex = parseInt(e.key) - 1;
-        const lanes = LaneStore.lanes;
-        if (lanes && lanes[laneIndex]) {
-          LaneStore.setActiveLane(lanes[laneIndex]);
+        this.createSessionSurface();
+      }
+
+      // Ctrl/Cmd+W: Close current surface
+      if (e.key === 'w' || e.key === 'W') {
+        e.preventDefault();
+        if (SurfaceStore.activeSurface) {
+          SurfaceStore.deleteSurface(SurfaceStore.activeSurface.id);
           this.renderActiveLane();
         }
       }
 
-      // Escape: Deselect or close context
-      if (e.key === 'Escape') {
-        // Could be used to close any open menus
+      // Ctrl/Cmd+B: Toggle file tree
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        this.toggleFileTree();
+      }
+
+      // Ctrl/Cmd+,: Open settings
+      if (e.key === ',') {
+        e.preventDefault();
+        this.openSettingsSurface();
+      }
+
+      // Ctrl/Cmd+1-9: Quick switch to session N
+      if (e.key >= '1' && e.key <= '9') {
+        e.preventDefault();
+        const index = parseInt(e.key) - 1;
+        const sessions = SurfaceStore.surfaces.filter(s => s.kind === 'agent-session');
+        if (sessions[index]) {
+          SurfaceStore.setActiveSurface(sessions[index].id);
+          this.renderActiveLane();
+        }
+      }
+
+      // Ctrl+Tab: Next surface
+      if (e.key === 'Tab' && !e.shiftKey) {
+        e.preventDefault();
+        this.cycleSurface(1);
+      }
+
+      // Ctrl+Shift+Tab: Previous surface
+      if (e.key === 'Tab' && e.shiftKey) {
+        e.preventDefault();
+        this.cycleSurface(-1);
       }
     });
+  },
+
+  initToolbar() {
+    document.getElementById('newSessionBtn')?.addEventListener('click', () => {
+      this.createSessionSurface();
+    });
+
+    document.getElementById('toggleFilesBtn')?.addEventListener('click', () => {
+      this.toggleFileTree();
+    });
+
+    document.getElementById('openSettingsBtn')?.addEventListener('click', () => {
+      this.openSettingsSurface();
+    });
+  },
+
+  createDefaultSurfaceForLane(laneId) {
+    const lane = LaneStore.getLane(laneId);
+    if (!lane) return;
+
+    // Ensure lane has at least one column
+    if (lane.columns.length === 0) {
+      lane.columns.push({
+        id: `col-${Date.now()}`,
+        surfaces: [],
+        width: 100,
+        isActive: true
+      });
+    }
+
+    const column = lane.columns[0];
+    const surface = SurfaceStore.createSurface({
+      kind: 'agent-session',
+      title: `Session 1`
+    });
+    column.surfaces.push(surface);
+    LaneStore.updateLane(laneId, { columns: lane.columns });
+  },
+
+  createSessionSurface() {
+    const lane = LaneStore.activeLane;
+    if (!lane) {
+      // Create a new lane if none exists
+      const newLane = LaneStore.createLane({ name: `Lane ${LaneStore.lanes.length + 1}` });
+      LaneStore.setActiveLane(newLane);
+      return this.createSessionSurface();
+    }
+
+    // Ensure lane has at least one column
+    if (lane.columns.length === 0) {
+      lane.columns.push({
+        id: `col-${Date.now()}`,
+        surfaces: [],
+        width: 100,
+        isActive: true
+      });
+      LaneStore.updateLane(lane.id, { columns: lane.columns });
+    }
+
+    const column = lane.columns[0];
+    const sessionCount = column.surfaces.filter(s => s.kind === 'agent-session').length;
+    const surface = SurfaceStore.createSurface({
+      kind: 'agent-session',
+      title: `Session ${sessionCount + 1}`
+    });
+    column.surfaces.push(surface);
+    LaneStore.updateLane(lane.id, { columns: lane.columns });
+    this.renderActiveLane();
+  },
+
+  toggleFileTree() {
+    const lane = LaneStore.activeLane;
+    if (!lane?.columns[0]) return;
+
+    const fileTreeSurface = lane.columns[0].surfaces.find(s => s.kind === 'workspace-files');
+    if (fileTreeSurface) {
+      SurfaceStore.deleteSurface(fileTreeSurface.id);
+      // Also remove from lane
+      lane.columns[0].surfaces = lane.columns[0].surfaces.filter(s => s.id !== fileTreeSurface.id);
+      LaneStore.updateLane(lane.id, { columns: lane.columns });
+    } else {
+      const surface = SurfaceStore.createSurface({
+        kind: 'workspace-files',
+        title: 'Files'
+      });
+      lane.columns[0].surfaces.push(surface);
+      LaneStore.updateLane(lane.id, { columns: lane.columns });
+    }
+    this.renderActiveLane();
+  },
+
+  openSettingsSurface() {
+    const lane = LaneStore.activeLane;
+    if (!lane?.columns[0]) {
+      // Create lane if none exists
+      const newLane = LaneStore.createLane({ name: 'Settings' });
+      LaneStore.setActiveLane(newLane);
+      return this.openSettingsSurface();
+    }
+
+    // Check if settings already open
+    const existing = lane.columns[0].surfaces.find(s => s.kind === 'settings');
+    if (existing) {
+      SurfaceStore.setActiveSurface(existing.id);
+    } else {
+      const surface = SurfaceStore.createSurface({
+        kind: 'settings',
+        title: 'Settings'
+      });
+      lane.columns[0].surfaces.push(surface);
+      LaneStore.updateLane(lane.id, { columns: lane.columns });
+    }
+    this.renderActiveLane();
+  },
+
+  cycleSurface(direction) {
+    const surfaces = SurfaceStore.surfaces;
+    if (surfaces.length < 2) return;
+
+    const currentIndex = surfaces.findIndex(s => s.id === SurfaceStore.activeSurfaceId);
+    const nextIndex = (currentIndex + direction + surfaces.length) % surfaces.length;
+    SurfaceStore.setActiveSurface(surfaces[nextIndex].id);
+    this.renderActiveLane();
   }
 };
 
