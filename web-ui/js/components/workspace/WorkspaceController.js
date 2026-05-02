@@ -14,6 +14,7 @@ const WorkspaceController = {
     this.initToolbar();
     this.loadWorkspace();
     this.setupKeyboardShortcuts();
+    this.setupBeforeUnload();
   },
 
   initLaneNavigator() {
@@ -222,7 +223,12 @@ const WorkspaceController = {
   },
 
   loadWorkspace() {
-    // Check if we need to create default workspace
+    // Load from localStorage first
+    WorkspaceStore.load();
+    LaneStore.load();
+    SurfaceStore.load();
+
+    // Create defaults if empty
     if (WorkspaceStore.workspaces.length === 0) {
       const defaultWorkspace = WorkspaceStore.createWorkspace({
         name: 'Default Workspace'
@@ -239,6 +245,7 @@ const WorkspaceController = {
         ]
       });
       LaneStore.setActiveLane(mainLane);
+      this.createDefaultSurfaceForLane(mainLane.id);
     }
 
     // Initial render
@@ -466,6 +473,14 @@ const WorkspaceController = {
     const nextIndex = (currentIndex + direction + surfaces.length) % surfaces.length;
     SurfaceStore.setActiveSurface(surfaces[nextIndex].id);
     this.renderActiveLane();
+  },
+
+  setupBeforeUnload() {
+    window.addEventListener('beforeunload', () => {
+      WorkspaceStore.save();
+      LaneStore.save();
+      SurfaceStore.save();
+    });
   }
 };
 

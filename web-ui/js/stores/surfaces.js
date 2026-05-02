@@ -5,6 +5,38 @@ const SurfaceStore = {
   activeSurface: null,
   listeners: [],
 
+  // Storage key for localStorage persistence
+  STORAGE_KEY: 'jcode-surfaces-v1',
+
+  // Save to localStorage
+  save() {
+    try {
+      const data = {
+        version: 1,
+        surfaces: this.surfaces,
+        activeSurfaceId: this.activeSurface?.id
+      };
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.error('Failed to save surfaces:', e);
+    }
+  },
+
+  // Load from localStorage
+  load() {
+    try {
+      const data = JSON.parse(localStorage.getItem(this.STORAGE_KEY));
+      if (data && data.version === 1) {
+        this.surfaces = data.surfaces || [];
+        if (data.activeSurfaceId) {
+          this.activeSurface = this.surfaces.find(s => s.id === data.activeSurfaceId);
+        }
+      }
+    } catch (e) {
+      console.log('Failed to load surfaces:', e);
+    }
+  },
+
   setSurfaces(surfaces) {
     this.surfaces = surfaces || [];
     this.notify();

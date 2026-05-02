@@ -5,6 +5,38 @@ const LaneStore = {
   activeLane: null,
   listeners: [],
 
+  // Storage key for localStorage persistence
+  STORAGE_KEY: 'jcode-lanes-v1',
+
+  // Save to localStorage
+  save() {
+    try {
+      const data = {
+        version: 1,
+        lanes: this.lanes,
+        activeLaneId: this.activeLane?.id
+      };
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.error('Failed to save lanes:', e);
+    }
+  },
+
+  // Load from localStorage
+  load() {
+    try {
+      const data = JSON.parse(localStorage.getItem(this.STORAGE_KEY));
+      if (data && data.version === 1) {
+        this.lanes = data.lanes || [];
+        if (data.activeLaneId) {
+          this.activeLane = this.lanes.find(l => l.id === data.activeLaneId);
+        }
+      }
+    } catch (e) {
+      console.log('Failed to load lanes:', e);
+    }
+  },
+
   setLanes(lanes) {
     this.lanes = lanes || [];
     this.notify();

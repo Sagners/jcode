@@ -5,6 +5,38 @@ const WorkspaceStore = {
   activeWorkspace: null,
   listeners: [],
 
+  // Storage key for localStorage persistence
+  STORAGE_KEY: 'jcode-workspace-v1',
+
+  // Save to localStorage
+  save() {
+    try {
+      const data = {
+        version: 1,
+        workspaces: this.workspaces,
+        activeWorkspaceId: this.activeWorkspace?.id
+      };
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.error('Failed to save workspace:', e);
+    }
+  },
+
+  // Load from localStorage
+  load() {
+    try {
+      const data = JSON.parse(localStorage.getItem(this.STORAGE_KEY));
+      if (data && data.version === 1) {
+        this.workspaces = data.workspaces || [];
+        if (data.activeWorkspaceId) {
+          this.activeWorkspace = this.workspaces.find(w => w.id === data.activeWorkspaceId);
+        }
+      }
+    } catch (e) {
+      console.log('Failed to load workspace:', e);
+    }
+  },
+
   setWorkspaces(workspaces) {
     this.workspaces = workspaces || [];
     this.notify();
