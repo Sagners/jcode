@@ -46,4 +46,16 @@
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+
+  /* Workspace Layout */
+  --lane-nav-width: 140px;
+  --header-height: 52px;
+  --surface-header-height: 36px;
+  --surface-min-width: 280px;
+  --surface-max-ratio: 50%;
+
+  /* Surface Status Colors */
+  --status-idle: #22c55e;
+  --status-running: #f59e0b;
+  --status-error: #ef4444;
 }
