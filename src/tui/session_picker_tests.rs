@@ -1,5 +1,19 @@
 use super::*;
 use chrono::{Duration as ChronoDuration, Utc};
+use std::io::Write;
+use std::time::{Duration as StdDuration, SystemTime};
+
+fn write_session_file_with_mtime(
+    path: impl AsRef<std::path::Path>,
+    content: &str,
+    modified_secs: u64,
+) {
+    let mut file = std::fs::File::create(path.as_ref()).expect("create session file");
+    file.write_all(content.as_bytes())
+        .expect("write session file");
+    file.set_modified(SystemTime::UNIX_EPOCH + StdDuration::from_secs(modified_secs))
+        .expect("set modified time");
+}
 
 fn make_session(id: &str, short_name: &str, is_debug: bool, status: SessionStatus) -> SessionInfo {
     make_session_with_flags(id, short_name, is_debug, false, status)
@@ -87,56 +101,122 @@ fn test_status_inference() {
 fn test_collect_recent_session_stems_skips_empty_recent_sessions() {
     let dir = tempfile::TempDir::new().expect("tempdir");
 
-    std::fs::write(
+    write_session_file_with_mtime(
         dir.path().join("session_alpha_1000.json"),
         r#"{"messages":[{"role":"user","content":"hi"}]}"#,
-    )
-    .expect("write alpha");
-    std::fs::write(
+        1000,
+    );
+    write_session_file_with_mtime(
         dir.path().join("session_beta_2000.json"),
         r#"{"messages":[]}"#,
-    )
-    .expect("write beta");
-    std::fs::write(
+        2000,
+    );
+    write_session_file_with_mtime(
         dir.path().join("session_gamma_3000.json"),
         r#"{"messages":[{"role":"user","content":"hello"}]}"#,
-    )
-    .expect("write gamma");
-    std::fs::write(
+        3000,
+    );
+    write_session_file_with_mtime(
         dir.path().join("session_delta_4000.json"),
         r#"{"messages":[]}"#,
-    )
-    .expect("write delta");
+        4000,
+    );
 
     let stems = collect_recent_session_stems(dir.path(), 2).expect("collect stems");
     assert_eq!(stems, vec!["session_gamma_3000", "session_alpha_1000"]);
 }
 
 #[test]
-fn test_collect_recent_session_stems_orders_by_timestamp_desc() {
+fn test_collect_recent_session_stems_skips_system_context_only_sessions() {
     let dir = tempfile::TempDir::new().expect("tempdir");
 
-    std::fs::write(
+    write_session_file_with_mtime(
+        dir.path().join("session_empty_context_9000.json"),
+        r##"{"messages":[{"role":"user","display_role":"system","content":[{"type":"text","text":"<system-reminder>\n# Session Context\n</system-reminder>"}]}]}"##,
+        9000,
+    );
+    write_session_file_with_mtime(
+        dir.path().join("session_real_1000.json"),
+        r#"{"messages":[{"role":"user","content":"real prompt"}]}"#,
+        1000,
+    );
+
+    let stems = collect_recent_session_stems(dir.path(), 1).expect("collect stems");
+    assert_eq!(stems, vec!["session_real_1000"]);
+}
+
+#[test]
+fn test_collect_recent_session_stems_keeps_system_context_with_visible_journal_turn() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let stem = "session_context_then_journal_9000";
+
+    write_session_file_with_mtime(
+        dir.path().join(format!("{stem}.json")),
+        r##"{"messages":[{"role":"user","display_role":"system","content":[{"type":"text","text":"<system-reminder>\n# Session Context\n</system-reminder>"}]}]}"##,
+        1000,
+    );
+    write_session_file_with_mtime(
+        dir.path().join(format!("{stem}.journal.jsonl")),
+        r#"{"meta":{"updated_at":"2026-05-01T00:00:00Z"},"append_messages":[{"role":"user","content":"real prompt from journal"}]}"#,
+        9000,
+    );
+
+    let stems = collect_recent_session_stems(dir.path(), 1).expect("collect stems");
+    assert_eq!(stems, vec![stem]);
+}
+
+#[test]
+fn test_collect_recent_session_stems_uses_timestamp_as_mtime_tiebreaker() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    write_session_file_with_mtime(
         dir.path().join("session_old_1111.json"),
         r#"{"messages":[{"role":"user","content":"old"}]}"#,
-    )
-    .expect("write old");
-    std::fs::write(
+        1000,
+    );
+    write_session_file_with_mtime(
         dir.path().join("session_mid_2222.json"),
         r#"{"messages":[{"role":"user","content":"mid"}]}"#,
-    )
-    .expect("write mid");
-    std::fs::write(
+        1000,
+    );
+    write_session_file_with_mtime(
         dir.path().join("session_new_3333.json"),
         r#"{"messages":[{"role":"user","content":"new"}]}"#,
-    )
-    .expect("write new");
+        1000,
+    );
 
     let stems = collect_recent_session_stems(dir.path(), 3).expect("collect stems");
     assert_eq!(
         stems,
         vec!["session_new_3333", "session_mid_2222", "session_old_1111"]
     );
+}
+
+#[test]
+fn test_collect_recent_session_stems_prefers_recently_modified_long_running_session() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    for idx in 0..120 {
+        write_session_file_with_mtime(
+            &dir.path().join(format!(
+                "session_newer_created_{:013}.json",
+                2_000_000 + idx
+            )),
+            r#"{"messages":[{"role":"user","content":"short newer-created session"}]}"#,
+            1000 + idx,
+        );
+    }
+
+    let target = "session_long_running_0000000000500";
+    write_session_file_with_mtime(
+        &dir.path().join(format!("{target}.json")),
+        r#"{"messages":[{"role":"user","content":"old creation time, recently active"}]}"#,
+        10_000,
+    );
+
+    let stems = collect_recent_session_stems(dir.path(), 100).expect("collect stems");
+    assert_eq!(stems.first().map(String::as_str), Some(target));
+    assert!(stems.iter().any(|stem| stem == target));
 }
 
 #[test]
