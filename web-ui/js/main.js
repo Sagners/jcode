@@ -13,6 +13,14 @@ const App = {
     // Start router
     Router.init();
 
+    // Initialize workspace controller (lane-based UI)
+    if (typeof WorkspaceController !== 'undefined') {
+      WorkspaceController.init();
+    }
+
+    // Initialize WebSocket message handling
+    this.initWebSocketHandlers();
+
     // Load initial data
     await this.loadInitialData();
 
@@ -20,10 +28,23 @@ const App = {
   },
 
   initConnection() {
+    // Defer connection status UI update until we know the state
+    // The subscription will fire immediately, but checkConnection will override it
+    let connectionInitialized = false;
+
     // Update connection status indicator
     ConnectionStore.subscribe((state) => {
       const dot = document.getElementById('connectionDot');
       const status = document.getElementById('connectionStatus');
+      if (!dot || !status) return;
+
+      // Skip initial false state if we're about to check connection
+      if (!connectionInitialized && !state.connected && !state.connecting) {
+        // Don't update yet - wait for checkConnection
+        return;
+      }
+
+      connectionInitialized = true;
 
       if (state.connected) {
         dot.className = 'status-dot connected';
@@ -57,6 +78,57 @@ const App = {
     this.checkConnection();
   },
 
+  initWebSocketHandlers() {
+    // Handle incoming messages from gateway
+    WS.on('message', (data) => {
+      this.handleWebSocketMessage(data);
+    });
+  },
+
+  handleWebSocketMessage(data) {
+    console.log('WebSocket message:', data);
+
+    switch (data.type) {
+      case 'session_created':
+        if (data.session) {
+          SessionStore.addSession(data.session);
+        }
+        break;
+
+      case 'session_updated':
+        if (data.session) {
+          SessionStore.updateSession(data.session.id, data.session);
+        }
+        break;
+
+      case 'session_deleted':
+        if (data.session_id) {
+          SessionStore.removeSession(data.session_id);
+        }
+        break;
+
+      case 'message':
+        if (data.session_id && data.message) {
+          // Add message to store
+          MessagesStore.addMessage({
+            id: data.message.id || Date.now().toString(),
+            sessionId: data.session_id,
+            role: data.message.role || 'assistant',
+            content: data.message.content || '',
+            timestamp: Date.now()
+          });
+        }
+        break;
+
+      case 'pong':
+        // Heartbeat response - connection is alive
+        break;
+
+      default:
+        console.log('Unhandled message type:', data.type);
+    }
+  },
+
   async checkConnection() {
     ConnectionStore.setConnecting(true);
 
@@ -64,14 +136,60 @@ const App = {
       // Try HTTP health check
       const health = await API.health();
       console.log('Gateway health:', health);
+
+      // Gateway is available
       ConnectionStore.setConnected(true);
+
+      // Check for saved token in localStorage
+      let token = localStorage.getItem('jcode_auth_token');
+
+      if (!token) {
+        // Try to get a token by creating a device pair
+        token = await this.autoPair();
+      }
+
+      if (token) {
+        console.log('Connecting with auth token...');
+        WS.setToken(token);
+      }
+
+      // Connect WebSocket
+      WS.connect();
     } catch (e) {
-      console.log('Gateway not available via HTTP, trying WebSocket...');
+      console.log('Gateway not available:', e.message);
       ConnectionStore.setConnected(false);
     }
+  },
 
-    // Always try WebSocket
-    WS.connect();
+  async autoPair() {
+    try {
+      // Generate a device ID
+      const deviceId = 'web-ui-' + Math.random().toString(36).substr(2, 9);
+      const deviceName = 'jcode Web UI';
+
+      // Try to pair (will work if there's a pending code from jcode pair)
+      const pairResponse = await fetch('http://127.0.0.1:7643/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: '000000',  // Placeholder - gateway will reject if no valid code
+          device_id: deviceId,
+          device_name: deviceName
+        })
+      });
+
+      if (pairResponse.ok) {
+        const data = await pairResponse.json();
+        if (data.token) {
+          localStorage.setItem('jcode_auth_token', data.token);
+          console.log('Auto-paired successfully');
+          return data.token;
+        }
+      }
+    } catch (e) {
+      console.log('Auto-pairing failed:', e.message);
+    }
+    return null;
   },
 
   registerRoutes() {

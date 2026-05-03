@@ -6,9 +6,16 @@ const WS = {
   maxReconnectAttempts: 5,
   reconnectDelay: 1000,
   listeners: new Map(),
+  token: null,
+  requestId: 0,
+  pendingRequests: new Map(),
 
   connect() {
-    const wsUrl = 'ws://127.0.0.1:7643/ws';
+    // Build WebSocket URL with token if available
+    let wsUrl = 'ws://127.0.0.1:7643/ws';
+    if (this.token) {
+      wsUrl += `?token=${this.token}`;
+    }
     console.log('WebSocket: Connecting to', wsUrl);
     this.socket = new WebSocket(wsUrl);
 
@@ -60,8 +67,16 @@ const WS = {
     }, delay);
   },
 
+  setToken(token) {
+    this.token = token;
+  },
+
   send(data) {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      // Add id if not present
+      if (!data.id) {
+        data.id = ++this.requestId;
+      }
       this.socket.send(JSON.stringify(data));
       return true;
     }

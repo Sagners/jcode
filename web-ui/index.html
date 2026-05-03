@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>jcode Web UI</title>
+  <title>jcode</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,8 +13,295 @@
   <link rel="stylesheet" href="css/pages/sessions.css">
   <link rel="stylesheet" href="css/pages/workspace.css">
   <link rel="stylesheet" href="css/pages/settings.css">
+  <style>
+    /* ===== Custom Title Bar ===== */
+    .titlebar {
+      height: 36px;
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0;
+      -webkit-app-region: drag;
+      user-select: none;
+      position: relative;
+      z-index: 1000;
+    }
+
+    .titlebar::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.3), transparent);
+    }
+
+    .titlebar-brand {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding-left: var(--space-4);
+      font-size: var(--text-sm);
+      font-weight: 600;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .titlebar-brand svg {
+      width: 16px;
+      height: 16px;
+      fill: var(--accent);
+    }
+
+    .titlebar-controls {
+      display: flex;
+      -webkit-app-region: no-drag;
+    }
+
+    .titlebar-btn {
+      width: 46px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      position: relative;
+    }
+
+    .titlebar-btn:hover {
+      background: var(--surface-elevated);
+      color: var(--text-primary);
+    }
+
+    .titlebar-btn.close:hover {
+      background: var(--error);
+      color: white;
+    }
+
+    .titlebar-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .titlebar-btn-maximize svg {
+      transition: transform var(--transition-fast);
+    }
+
+    .titlebar-btn.maximized .titlebar-btn-maximize svg {
+      transform: scale(0.85);
+    }
+
+    /* ===== Main Layout ===== */
+    .main-layout {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .workspace-layout {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .workspace-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ===== Theme Toggle Button ===== */
+    .theme-toggle-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      font-size: 16px;
+    }
+
+    .theme-toggle-btn:hover {
+      background: var(--accent-tint);
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: rotate(15deg);
+    }
+
+    .theme-toggle-btn .sun { display: none; }
+    .theme-toggle-btn .moon { display: block; }
+    .theme-toggle-btn.light .sun { display: block; }
+    .theme-toggle-btn.light .moon { display: none; }
+
+    /* ===== Command Palette ===== */
+    .command-palette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 9000;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 120px;
+      opacity: 0;
+      visibility: hidden;
+      transition: all var(--transition-fast);
+    }
+
+    .command-palette.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .command-palette-box {
+      width: 500px;
+      max-width: 90vw;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+      transform: translateY(-20px) scale(0.95);
+      transition: all var(--transition-normal);
+    }
+
+    .command-palette.show .command-palette-box {
+      transform: translateY(0) scale(1);
+    }
+
+    .command-palette-input {
+      width: 100%;
+      padding: var(--space-4) var(--space-5);
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-primary);
+      font-size: var(--text-lg);
+      font-family: var(--font-ui);
+      outline: none;
+    }
+
+    .command-palette-input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .command-palette-results {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .command-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .command-item:hover,
+    .command-item.selected {
+      background: var(--accent-tint);
+    }
+
+    .command-item-icon {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .command-item:hover .command-item-icon,
+    .command-item.selected .command-item-icon {
+      color: var(--accent);
+    }
+
+    .command-item-label {
+      flex: 1;
+      font-size: var(--text-sm);
+      color: var(--text-primary);
+    }
+
+    .command-item-shortcut {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      color: var(--text-tertiary);
+      background: var(--bg);
+      padding: 2px var(--space-2);
+      border-radius: var(--radius-sm);
+    }
+
+    .command-palette-footer {
+      padding: var(--space-3) var(--space-4);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: var(--space-4);
+      font-size: var(--text-xs);
+      color: var(--text-tertiary);
+    }
+
+    .command-palette-footer kbd {
+      font-family: var(--font-mono);
+      background: var(--bg);
+      padding: 2px var(--space-1);
+      border-radius: 3px;
+      margin: 0 2px;
+    }
+  </style>
 </head>
 <body>
+  <!-- Custom Title Bar -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-brand">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+      </svg>
+      <span>jcode</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="titlebar-minimize" title="Minimize">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </button>
+      <button class="titlebar-btn" id="titlebar-maximize" title="Maximize">
+        <svg class="titlebar-btn-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="5" y="5" width="14" height="14" rx="1"/>
+        </svg>
+      </button>
+      <button class="titlebar-btn close" id="titlebar-close" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="6" y1="6" x2="18" y2="18"/>
+          <line x1="6" y1="18" x2="18" y2="6"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Workspace -->
   <div class="workspace-layout">
     <!-- Header -->
     <header class="header">
@@ -29,6 +316,10 @@
           <button class="toolbar-btn" id="toggleFilesBtn" title="Toggle Files (Ctrl+B)">📁</button>
           <button class="toolbar-btn" id="openSettingsBtn" title="Settings (Ctrl+,)">⚙️</button>
         </div>
+        <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle Theme (Ctrl+Shift+P)">
+          <span class="moon">🌙</span>
+          <span class="sun">☀️</span>
+        </button>
         <select id="modelSelect" class="model-select">
           <option value="claude-opus-4-7">Opus 4</option>
           <option value="claude-sonnet-4-7">Sonnet 4</option>
@@ -58,6 +349,224 @@
     </div>
   </div>
 
-  <!-- Scripts will be added by WorkspaceController -->
+  <!-- Command Palette -->
+  <div class="command-palette" id="commandPalette">
+    <div class="command-palette-box">
+      <input type="text" class="command-palette-input" id="commandInput" placeholder="Type a command...">
+      <div class="command-palette-results" id="commandResults"></div>
+      <div class="command-palette-footer">
+        <span><kbd>↑↓</kbd> Navigate</span>
+        <span><kbd>Enter</kbd> Select</span>
+        <span><kbd>Esc</kbd> Close</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/stores/connection.js"></script>
+  <script src="js/stores/session.js"></script>
+  <script src="js/stores/messages.js"></script>
+  <script src="js/stores/lanes.js"></script>
+  <script src="js/stores/surfaces.js"></script>
+  <script src="js/stores/workspace.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/websocket.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/shortcuts.js"></script>
+  <script src="js/notification.js"></script>
+  <script src="js/context-menu.js"></script>
+  <script src="js/keyboard-help.js"></script>
+  <script src="js/skeleton.js"></script>
+  <script src="js/drag-drop.js"></script>
+  <script src="js/resizable.js"></script>
+  <script src="js/error-retry.js"></script>
+  <script src="js/progress.js"></script>
+  <script src="js/components/surfaces/SettingsSurface.js"></script>
+  <script src="js/components/surfaces/AgentSessionSurface.js"></script>
+  <script src="js/components/surfaces/WorkspaceFilesSurface.js"></script>
+  <script src="js/components/workspace/WorkspaceController.js"></script>
+  <script src="js/main.js"></script>
+
+  <!-- Window Controls & Features Script -->
+  <script>
+    // Initialize all desktop features
+    async function initDesktopFeatures() {
+      // ===== Window Controls (Tauri) =====
+      if (window.__TAURI__) {
+        const { invoke } = window.__TAURI__.core;
+
+        // Minimize button
+        document.getElementById('titlebar-minimize')?.addEventListener('click', async () => {
+          try {
+            await invoke('minimize_window');
+          } catch (e) {
+            console.log('minimize_window not available:', e);
+          }
+        });
+
+        // Maximize button
+        document.getElementById('titlebar-maximize')?.addEventListener('click', async () => {
+          try {
+            await invoke('maximize_window');
+            const btn = document.getElementById('titlebar-maximize');
+            const isMax = await invoke('is_maximized');
+            btn?.classList.toggle('maximized', isMax);
+          } catch (e) {
+            console.log('maximize_window not available:', e);
+          }
+        });
+
+        // Close button
+        document.getElementById('titlebar-close')?.addEventListener('click', async () => {
+          try {
+            await invoke('close_window');
+          } catch (e) {
+            console.log('close_window not available:', e);
+          }
+        });
+
+        // Check initial maximized state
+        try {
+          const isMax = await invoke('is_maximized');
+          document.getElementById('titlebar-maximize')?.classList.toggle('maximized', isMax);
+        } catch (e) {
+          console.log('is_maximized not available:', e);
+        }
+      }
+
+      // ===== Theme Toggle =====
+      const themeBtn = document.getElementById('themeToggleBtn');
+      themeBtn?.addEventListener('click', () => {
+        Theme.toggle();
+        updateThemeButton();
+        Notification.success('Theme Changed', `Switched to ${Theme.getCurrentTheme().name} mode`);
+      });
+
+      function updateThemeButton() {
+        if (Theme.currentTheme === 'light') {
+          themeBtn.classList.add('light');
+        } else {
+          themeBtn.classList.remove('light');
+        }
+      }
+
+      // Update theme button on theme change
+      window.addEventListener('themechange', updateThemeButton);
+      updateThemeButton();
+
+      // ===== Command Palette =====
+      const commandPalette = document.getElementById('commandPalette');
+      const commandInput = document.getElementById('commandInput');
+      const commandResults = document.getElementById('commandResults');
+      let selectedIndex = 0;
+      let commands = [];
+
+      const commandDefinitions = [
+        { id: 'new-session', label: 'New Session', icon: '➕', shortcut: 'Ctrl+N', action: () => document.getElementById('newSessionBtn')?.click() },
+        { id: 'toggle-files', label: 'Toggle Files Panel', icon: '📁', shortcut: 'Ctrl+B', action: () => document.getElementById('toggleFilesBtn')?.click() },
+        { id: 'open-settings', label: 'Open Settings', icon: '⚙️', shortcut: 'Ctrl+,', action: () => document.getElementById('openSettingsBtn')?.click() },
+        { id: 'toggle-theme', label: 'Toggle Theme', icon: '🎨', shortcut: 'Ctrl+Shift+P', action: () => { Theme.toggle(); updateThemeButton(); } },
+        { id: 'toggle-theme-dark', label: 'Dark Theme', icon: '🌙', action: () => Theme.apply('dark') },
+        { id: 'toggle-theme-light', label: 'Light Theme', icon: '☀️', action: () => Theme.apply('light') },
+        { id: 'toggle-theme-midnight', label: 'Midnight Theme', icon: '✨', action: () => Theme.apply('midnight') },
+      ];
+
+      function renderCommands(filter = '') {
+        const filtered = filter
+          ? commandDefinitions.filter(cmd => cmd.label.toLowerCase().includes(filter.toLowerCase()))
+          : commandDefinitions;
+
+        commands = filtered;
+        selectedIndex = 0;
+
+        commandResults.innerHTML = filtered.map((cmd, i) => `
+          <div class="command-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">
+            <span class="command-item-icon">${cmd.icon}</span>
+            <span class="command-item-label">${cmd.label}</span>
+            ${cmd.shortcut ? `<span class="command-item-shortcut">${cmd.shortcut}</span>` : ''}
+          </div>
+        `).join('');
+
+        // Add click handlers
+        commandResults.querySelectorAll('.command-item').forEach(item => {
+          item.addEventListener('click', () => {
+            const idx = parseInt(item.dataset.index);
+            executeCommand(idx);
+          });
+        });
+      }
+
+      function executeCommand(index) {
+        if (commands[index]) {
+          commands[index].action();
+          hideCommandPalette();
+        }
+      }
+
+      function hideCommandPalette() {
+        commandPalette?.classList.remove('show');
+        commandInput.value = '';
+      }
+
+      function showCommandPalette() {
+        commandPalette?.classList.add('show');
+        commandInput?.focus();
+        renderCommands();
+      }
+
+      commandInput?.addEventListener('input', (e) => {
+        renderCommands(e.target.value);
+      });
+
+      commandInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          selectedIndex = Math.min(selectedIndex + 1, commands.length - 1);
+          updateSelection();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          selectedIndex = Math.max(selectedIndex - 1, 0);
+          updateSelection();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          executeCommand(selectedIndex);
+        } else if (e.key === 'Escape') {
+          hideCommandPalette();
+        }
+      });
+
+      function updateSelection() {
+        commandResults.querySelectorAll('.command-item').forEach((item, i) => {
+          item.classList.toggle('selected', i === selectedIndex);
+        });
+      }
+
+      // Close on click outside
+      commandPalette?.addEventListener('click', (e) => {
+        if (e.target === commandPalette) {
+          hideCommandPalette();
+        }
+      });
+
+      // Register keyboard shortcuts
+      Shortcuts.register('commandPalette', showCommandPalette);
+      Shortcuts.register('toggleTheme', () => {
+        Theme.toggle();
+        updateThemeButton();
+      });
+
+      // Global Ctrl+K to open command palette
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+          e.preventDefault();
+          showCommandPalette();
+        }
+      });
+    }
+
+    // Run on DOM ready
+    document.addEventListener('DOMContentLoaded', initDesktopFeatures);
+  </script>
 </body>
 </html>

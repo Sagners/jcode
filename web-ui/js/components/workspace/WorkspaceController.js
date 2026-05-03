@@ -138,56 +138,170 @@ const WorkspaceController = {
       return columnEl;
     }
 
-    // Render surfaces as placeholders (Tasks 4-6 will implement specific surfaces)
+    // Render surfaces based on kind
     column.surfaces.forEach((surface, surfIndex) => {
-      const surfaceEl = this.createSurfacePlaceholder(surface, surfIndex);
+      const surfaceEl = this.createSurfaceElement(surface, surfIndex);
       columnEl.appendChild(surfaceEl);
     });
 
     return columnEl;
   },
 
-  createSurfacePlaceholder(surface, surfIndex) {
+  createSurfaceElement(surface, surfIndex) {
     const surfaceEl = document.createElement('div');
-    surfaceEl.className = 'surface-container';
+    surfaceEl.className = `surface-container ${surface.kind}-surface`;
     surfaceEl.dataset.surfaceIndex = surfIndex;
     surfaceEl.dataset.surfaceKind = surface.kind || 'unknown';
+    surfaceEl.dataset.surfaceId = surface.id;
 
-    surfaceEl.innerHTML = `
-      <div class="surface-header">
-        <span class="surface-status ${surface.status || 'idle'}"></span>
-        <span class="surface-title">${surface.title || 'Untitled Surface'}</span>
-        <div class="surface-actions">
-          <button class="surface-action-btn" data-action="minimize" title="Minimize">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
-          <button class="surface-action-btn danger" data-action="close" title="Close">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
+    // Common header
+    const header = document.createElement('div');
+    header.className = 'surface-header';
+    header.innerHTML = `
+      <span class="surface-status ${surface.status || 'idle'}"></span>
+      <span class="surface-title">${surface.title || 'Untitled'}</span>
+      <div class="surface-actions">
+        <button class="surface-action-btn" data-action="minimize" title="Minimize">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+        <button class="surface-action-btn danger" data-action="close" title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
       </div>
-      <div class="surface-body">
-        <div style="
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          color: var(--text-tertiary);
-          gap: var(--space-2);
-        ">
-          <span style="font-size: var(--text-xs); text-transform: uppercase;">${surface.kind || 'surface'}</span>
-          <span style="font-size: var(--text-sm);">Surface content will be implemented in Tasks 4-6</span>
+    `;
+    surfaceEl.appendChild(header);
+
+    // Render content based on surface kind
+    const body = document.createElement('div');
+    body.className = 'surface-body';
+
+    switch (surface.kind) {
+      case 'settings':
+        body.appendChild(SettingsSurface.render(surface));
+        break;
+
+      case 'agent-session':
+        body.appendChild(AgentSessionSurface.render(surface));
+        break;
+
+      case 'workspace-files':
+        body.appendChild(WorkspaceFilesSurface.render(surface));
+        break;
+
+      default:
+        body.innerHTML = `
+          <div class="empty-state">
+            <span style="font-size: var(--text-xs); text-transform: uppercase; color: var(--text-tertiary);">
+              ${surface.kind || 'surface'}
+            </span>
+            <p style="color: var(--text-tertiary);">Surface content not implemented</p>
+          </div>
+        `;
+    }
+    surfaceEl.appendChild(body);
+
+    // Add event listeners
+    this.setupSurfaceEventListeners(surfaceEl, surface);
+
+    return surfaceEl;
+  },
+
+  renderAgentSessionSurface(surface) {
+    return `
+      <div class="session-body">
+        <div class="session-messages">
+          <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <p>Start a conversation</p>
+            <p style="font-size: var(--text-sm); color: var(--text-tertiary);">
+              Send a message to begin a session
+            </p>
+          </div>
+        </div>
+        <div class="composer">
+          <textarea class="composer-input" placeholder="Type your message..."
+            rows="1" id="msgInput_${surface.id}"></textarea>
+          <button class="composer-send" id="sendBtn_${surface.id}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
         </div>
       </div>
     `;
+  },
 
-    return surfaceEl;
+  renderWorkspaceFilesSurface(surface) {
+    return `
+      <div class="file-tree">
+        <div class="file-tree-empty">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span class="file-tree-empty-text">No workspace opened</span>
+        </div>
+      </div>
+    `;
+  },
+
+  setupSurfaceEventListeners(surfaceEl, surface) {
+    // Close button
+    const closeBtn = surfaceEl.querySelector('[data-action="close"]');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        SurfaceStore.deleteSurface(surface.id);
+        this.renderActiveLane();
+      });
+    }
+
+    // Minimize button
+    const minBtn = surfaceEl.querySelector('[data-action="minimize"]');
+    if (minBtn) {
+      minBtn.addEventListener('click', () => {
+        SurfaceStore.toggleMinimized(surface.id);
+      });
+    }
+
+    // Session send button
+    if (surface.kind === 'agent-session') {
+      const sendBtn = surfaceEl.querySelector(`#sendBtn_${surface.id}`);
+      const input = surfaceEl.querySelector(`#msgInput_${surface.id}`);
+
+      if (sendBtn && input) {
+        sendBtn.addEventListener('click', () => {
+          const content = input.value.trim();
+          if (content) {
+            this.sendMessage(surface.id, content);
+            input.value = '';
+          }
+        });
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendBtn.click();
+          }
+        });
+      }
+    }
+  },
+
+  sendMessage(sessionId, content) {
+    if (WS.getState() === 'open') {
+      WS.send({
+        type: 'message',
+        session_id: sessionId,
+        content: content
+      });
+    }
   },
 
   renderEmptyState() {

@@ -22,9 +22,9 @@ const API = {
     return text ? JSON.parse(text) : {};
   },
 
-  // Health check
+  // Health check (gateway uses /health, not /api/health)
   async health() {
-    return this.request('/api/health');
+    return this.request('/health');
   },
 
   // Session operations

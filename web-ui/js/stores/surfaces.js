@@ -66,6 +66,14 @@ const SurfaceStore = {
     if (this.activeSurface?.id === surfaceId) {
       this.activeSurface = this.surfaces[0] || null;
     }
+    // Also remove from LaneStore if present
+    if (typeof LaneStore !== 'undefined') {
+      LaneStore.lanes.forEach(lane => {
+        lane.columns?.forEach(col => {
+          col.surfaces = (col.surfaces || []).filter(s => s.id !== surfaceId);
+        });
+      });
+    }
     this.notify();
   },
 
