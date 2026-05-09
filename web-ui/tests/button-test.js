@@ -117,14 +117,24 @@ async function runTests() {
     const afterCount = await page.evaluate(() => {
       return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
     });
+    await page.evaluate(() => {
+      RuntimeStore.recordGatewayMessage({ type: 'connection_type', connection: 'websocket' });
+      RuntimeStore.recordGatewayMessage({ type: 'tool_start', id: 'tool-1', name: 'shell_command' });
+      RuntimeStore.recordGatewayMessage({ type: 'tokens', input: 12, output: 34, cache_read_input: 5 });
+      RuntimeStore.recordGatewayMessage({ type: 'memory_injected', count: 2, prompt_chars: 240 });
+      RuntimeStore.recordGatewayMessage({ type: 'tool_done', id: 'tool-1', name: 'shell_command', output: 'ok' });
+    });
+    await page.waitForTimeout(100);
     const runtimeRendered = await page.$('.runtime-surface-body');
+    const toolRendered = await page.$('.runtime-tool');
+    const contextRendered = await page.$('.runtime-context-grid');
 
     console.log('  Surfaces before:', beforeCount, 'after:', afterCount);
 
-    if (afterCount > beforeCount && runtimeRendered) {
+    if (afterCount > beforeCount && runtimeRendered && toolRendered && contextRendered) {
       pass('Open Runtime', `Surfaces: ${beforeCount} -> ${afterCount}`);
     } else {
-      fail('Open Runtime', 'Runtime surface not created');
+      fail('Open Runtime', 'Runtime surface did not render operational sections');
     }
   } catch (e) {
     fail('Open Runtime', e.message);

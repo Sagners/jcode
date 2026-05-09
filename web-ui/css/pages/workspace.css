@@ -1009,6 +1009,72 @@
   min-height: 320px;
 }
 
+.runtime-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.75fr);
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.runtime-current,
+.runtime-health-strip,
+.runtime-inspector-panel {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.08), rgba(255, 255, 255, 0.025));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.runtime-current {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4);
+}
+
+.runtime-kicker {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+}
+
+.runtime-current strong {
+  color: var(--text-primary);
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.runtime-current span:last-child {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.runtime-health-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+}
+
+.runtime-health-strip > div {
+  min-width: 0;
+  padding: var(--space-3);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.runtime-health-strip strong {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+}
+
 .runtime-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1033,6 +1099,116 @@
 }
 
 .runtime-summary-item strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.runtime-inspector-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.runtime-inspector-panel {
+  min-width: 0;
+  padding: var(--space-4);
+}
+
+.runtime-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.runtime-panel-head h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.runtime-panel-head span {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.runtime-tool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.runtime-tool {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+}
+
+.runtime-tool strong,
+.runtime-tool span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-tool strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.runtime-tool span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.runtime-tool-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.runtime-tool-running .runtime-tool-dot { background: var(--warning); animation: pulse 1s infinite; }
+.runtime-tool-done .runtime-tool-dot { background: var(--success); }
+.runtime-tool-error .runtime-tool-dot { background: var(--error); }
+
+.runtime-context-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.runtime-context-item {
+  min-width: 0;
+  padding: var(--space-3);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.runtime-context-item span,
+.runtime-context-item small {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.runtime-context-item strong {
+  display: block;
+  margin: var(--space-1) 0;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -1314,9 +1490,16 @@
     text-align: left;
   }
 
+  .runtime-overview,
+  .runtime-inspector-grid,
   .runtime-summary-grid,
   .desktop-runtime-grid {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-health-strip,
+  .runtime-context-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .runtime-event-head {

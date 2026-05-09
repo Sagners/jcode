@@ -137,16 +137,44 @@ async function runTests() {
   currentTest = 'Runtime Button';
   try {
     const runtimeBtn = await page.$('#openRuntimeBtn');
-    if (runtimeBtn) {
+    const protocolLoaded = await page.evaluate(() => typeof GatewayProtocol !== 'undefined');
+    if (runtimeBtn && protocolLoaded) {
       pass();
     } else {
-      fail('Runtime button not found');
+      fail('Runtime button or protocol adapter not found');
     }
   } catch (e) {
     fail(e.message);
   }
 
-  // Test 9: Mobile Horizontal Overflow
+  // Test 9: Runtime Protocol Normalization
+  currentTest = 'Runtime Protocol Normalization';
+  try {
+    const normalized = await page.evaluate(() => {
+      const event = GatewayProtocol.normalizeRuntimeEvent({
+        type: 'compaction',
+        trigger: 'background',
+        tokens_saved: 128,
+        pre_tokens: 1024,
+        post_tokens: 896
+      });
+      return {
+        title: event.title,
+        status: event.status,
+        detail: event.detail,
+        saved: event.metricUpdates.compaction.tokensSaved
+      };
+    });
+    if (normalized.title === 'Context compacted' && normalized.status === 'warning' && normalized.saved === 128) {
+      pass();
+    } else {
+      fail('Unexpected normalized event: ' + JSON.stringify(normalized));
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 10: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -163,7 +191,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 10: CSS Loading
+  // Test 11: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -177,7 +205,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 11: Console Errors Check (excluding expected 401 from API calls)
+  // Test 12: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {
