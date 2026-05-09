@@ -25,6 +25,9 @@ fn test_provider_choice_aliases_parse() {
 
     let args = Args::try_parse_from(["jcode", "--provider", "grok", "run", "smoke"]).unwrap();
     assert_eq!(args.provider, ProviderChoice::Xai);
+
+    let args = Args::try_parse_from(["jcode", "--provider", "cgc", "run", "smoke"]).unwrap();
+    assert_eq!(args.provider, ProviderChoice::Comtegra);
 }
 
 #[test]
@@ -34,6 +37,49 @@ fn model_list_subcommand_parses() {
         Some(Command::Model(ModelCommand::List { json, verbose })) => {
             assert!(json);
             assert!(verbose);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn session_rename_subcommand_parses() {
+    let args = Args::try_parse_from([
+        "jcode",
+        "session",
+        "rename",
+        "fox",
+        "release planning",
+        "--json",
+    ])
+    .unwrap();
+    match args.command {
+        Some(Command::Session(SessionCommand::Rename {
+            session,
+            name,
+            clear,
+            json,
+        })) => {
+            assert_eq!(session, "fox");
+            assert_eq!(name.as_deref(), Some("release planning"));
+            assert!(!clear);
+            assert!(json);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let args = Args::try_parse_from(["jcode", "session", "rename", "fox", "--clear"]).unwrap();
+    match args.command {
+        Some(Command::Session(SessionCommand::Rename {
+            session,
+            name,
+            clear,
+            json,
+        })) => {
+            assert_eq!(session, "fox");
+            assert!(name.is_none());
+            assert!(clear);
+            assert!(!json);
         }
         other => panic!("unexpected command: {:?}", other),
     }

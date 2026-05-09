@@ -642,6 +642,10 @@ impl Provider for GeminiProvider {
             .clone()
     }
 
+    fn supports_image_input(&self) -> bool {
+        true
+    }
+
     fn set_model(&self, model: &str) -> Result<()> {
         let trimmed = model.trim();
         if trimmed.is_empty() {
@@ -665,7 +669,13 @@ impl Provider for GeminiProvider {
             .map(|guard| guard.clone())
             .unwrap_or_default();
         if discovered.is_empty() {
-            return merge_gemini_model_lists(vec![self.model()]);
+            return merge_gemini_model_lists(
+                AVAILABLE_MODELS
+                    .iter()
+                    .map(|model| (*model).to_string())
+                    .chain(std::iter::once(self.model()))
+                    .collect(),
+            );
         }
 
         merge_gemini_model_lists(
@@ -678,6 +688,20 @@ impl Provider for GeminiProvider {
 
     fn available_models_for_switching(&self) -> Vec<String> {
         self.available_models_display()
+    }
+
+    fn model_routes(&self) -> Vec<super::ModelRoute> {
+        self.available_models_display()
+            .into_iter()
+            .map(|model| super::ModelRoute {
+                model,
+                provider: "Gemini".to_string(),
+                api_method: "code-assist-oauth".to_string(),
+                available: true,
+                detail: String::new(),
+                cheapness: None,
+            })
+            .collect()
     }
 
     async fn prefetch_models(&self) -> Result<()> {
@@ -748,7 +772,7 @@ fn is_gemini_model_not_found_error(err: &anyhow::Error) -> bool {
         || lower.contains("requested entity was not found")
 }
 
-fn build_system_instruction(system: &str) -> Option<GeminiContent> {
+pub(crate) fn build_system_instruction(system: &str) -> Option<GeminiContent> {
     let trimmed = system.trim();
     if trimmed.is_empty() {
         None
@@ -763,7 +787,7 @@ fn build_system_instruction(system: &str) -> Option<GeminiContent> {
     }
 }
 
-fn build_contents(messages: &[Message]) -> Vec<GeminiContent> {
+pub(crate) fn build_contents(messages: &[Message]) -> Vec<GeminiContent> {
     messages
         .iter()
         .filter_map(|message| {
@@ -785,7 +809,7 @@ fn build_contents(messages: &[Message]) -> Vec<GeminiContent> {
                         parts.push(GeminiPart {
                             function_call: Some(GeminiFunctionCall {
                                 name: name.clone(),
-                                args: input.clone(),
+                                args: crate::message::ToolCall::input_as_object(input),
                                 id: Some(id.clone()),
                             }),
                             ..Default::default()
@@ -846,7 +870,7 @@ fn tool_name_from_tool_result(tool_use_id: &str, messages: &[Message]) -> String
     "tool".to_string()
 }
 
-fn build_tools(tools: &[ToolDefinition]) -> Option<Vec<GeminiTool>> {
+pub(crate) fn build_tools(tools: &[ToolDefinition]) -> Option<Vec<GeminiTool>> {
     if tools.is_empty() {
         return None;
     }

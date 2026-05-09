@@ -160,11 +160,43 @@ Use it when capturing comparable before/after numbers for refactors.
   `rustc` at about **1.09 GiB RSS** when available memory crossed the 10% threshold. A direct
   no-`sccache` build reproduced the same signal, so `sccache` was only reporting the termination.
   `scripts/dev_cargo.sh` now enables adaptive low-memory overrides for `--profile selfdev` when
-  Linux + earlyoom + no swap + <24 GiB RAM are detected: `CARGO_INCREMENTAL=0`,
-  `CARGO_PROFILE_SELFDEV_INCREMENTAL=false`, and `CARGO_PROFILE_SELFDEV_CODEGEN_UNITS=16`.
-  Use `JCODE_SELFDEV_LOW_MEMORY=off` to disable, or `JCODE_SELFDEV_LOW_MEMORY=on` to force.
-  Validation: the same root build completed under those settings in **2m34s** after the interrupted
-  partial build reused artifacts.
+  Linux + earlyoom + no swap + <24 GiB RAM + <8 GiB currently available RAM are detected:
+  `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_SELFDEV_INCREMENTAL=false`, and
+  `CARGO_PROFILE_SELFDEV_CODEGEN_UNITS=16`. Use `JCODE_SELFDEV_LOW_MEMORY=off` to disable, or
+  `JCODE_SELFDEV_LOW_MEMORY=on` to force. Validation: the original root build completed under
+  those settings in **2m34s** after the interrupted partial build reused artifacts; a later
+  benchmark with 9.4 GiB available showed that preserving the inherited selfdev profile can reduce
+  warm edit builds from about **60s** to about **14s** when there is enough headroom.
+- 2026-05-05: trimmed root compile surface by replacing broad `tokio/full` with explicit used
+  features, aligning Jcode-owned `crossterm` dependencies on 0.29, and replacing `qr2term` with
+  direct `qrcode` rendering. This removed the duplicate `crossterm 0.28` path from the `jcode`
+  tree while preserving login QR output. Validation: `cargo check --profile selfdev -p jcode --bin
+  jcode`, `cargo test --profile selfdev login_qr --lib -- --nocapture`, and coordinated
+  `selfdev build` passed.
+- 2026-05-05: removed unused `reqwest/blocking` from `jcode-provider-core`; static search showed
+  no blocking API usage in that crate. Validation: `cargo check --profile selfdev -p
+  jcode-provider-core` and full `cargo check --profile selfdev -p jcode --bin jcode` passed.
+- 2026-05-03: added `JCODE_DEV_FEATURE_PROFILE` to `scripts/dev_cargo.sh` so compile-speed probes and
+  narrow inner-loop builds can consistently select feature sets without repeating Cargo flags. Profiles:
+  `default`, `minimal`/`none` (`--no-default-features`), `pdf` (`--no-default-features --features pdf`),
+  `embeddings` (`--no-default-features --features embeddings`), and `full` (`--features embeddings,pdf`).
+  The wrapper leaves explicit `--features` / `--no-default-features` cargo args untouched. Validation on
+  this machine: `JCODE_DEV_FEATURE_PROFILE=minimal scripts/dev_cargo.sh check -p jcode --lib --quiet` passed.
+- 2026-05-03: disabled Cargo auto-discovery for root binary targets and moved developer-only helper
+  binaries (`tui_bench`, `session_memory_bench`, `mermaid_side_panel_probe`) behind the opt-in
+  `dev-bins` feature. This keeps broad normal checks focused on production/test targets while preserving
+  explicit probe coverage via `cargo check --all-targets -p jcode --features dev-bins`. Validation showed
+  `cargo check --all-targets -p jcode` skips those three bins, while adding `--features dev-bins` includes them.
+- 2026-05-03: moved the self-dev build/version/channel support implementation out of the root crate and
+  into `crates/jcode-build-support`, leaving `src/build.rs` as a re-export facade. This cuts another
+  stable, high-fanout support subsystem out of the root compile unit while preserving existing call sites
+  (`crate::build::*`). Validation: `cargo check -p jcode-build-support`, `cargo test -p jcode-build-support`,
+  and `cargo check -p jcode --lib` passed during the split.
+- 2026-05-03: moved the pure keybinding parser/matcher/types from `src/tui/keybind.rs` into
+  `jcode-tui-core::keybind`, leaving root TUI config-loading wrappers in place. This creates a reusable
+  cache boundary for a low-coupling TUI helper module while preserving the existing `crate::tui::keybind::*`
+  API. Validation: `cargo check -p jcode-tui-core`, `cargo test -p jcode-tui-core`, and
+  `cargo check -p jcode --lib` passed.
 
 Warm-only touched-file checkpoints captured so far on this machine:
 
@@ -208,8 +240,12 @@ Proposed destination layout:
   - embedding model integration and related heavy inference dependencies
 - `jcode-tui`
   - TUI rendering, widgets, state reduction, terminal UI support
+- `jcode-tui-core`
+  - low-level TUI helpers with minimal root coupling, including stream buffers and keybinding parsing
 - `jcode-selfdev`
   - customization records, migration logic, self-dev productization
+- `jcode-build-support`
+  - self-dev build commands, source-state fingerprints, binary channel paths/manifests
 
 ### Phase 4 — First crate splits
 
@@ -230,6 +266,15 @@ Start with the highest-leverage cache boundaries:
   cache boundary for the heaviest embedding dependencies.
 - Follow-up: gather more realistic before/after timing data using controlled
   touched-file benchmarks rather than fully hot no-op rebuilds.
+- 2026-05-05: made the `embeddings` feature opt-in instead of part of default
+  features. The crate boundary was already in place, but ordinary `cargo check`
+  / `cargo build` still compiled the `tract` / `tokenizers` subtree unless
+  developers remembered `--no-default-features`. Default builds now keep `pdf`
+  enabled but skip local embedding inference; full local inference remains
+  available via `--features embeddings` or `JCODE_DEV_FEATURE_PROFILE=full`.
+  Validation: `cargo tree -p jcode --edges normal --depth 1` includes
+  `jcode-pdf` but not `jcode-embedding`; adding `--features embeddings` includes
+  both; `cargo check -p jcode --quiet` passes.
 
 - 2026-03-24: moved PDF extraction behind the new `crates/jcode-pdf` workspace
   crate and fixed the `--no-default-features` build path by making PDF support
@@ -289,6 +334,100 @@ Start with the highest-leverage cache boundaries:
   local tool/message types.
 - Reason: this creates another provider-side cache boundary now without prematurely pulling `Message`, `ToolDefinition`,
   or the `Provider` trait into a shared crate.
+
+- 2026-05-05: moved provider catalog-refresh diffing into
+  `jcode-provider-core::catalog_refresh` and re-exported it from the root provider facade.
+- Boundary decision: move the pure `ModelRoute` summary/diff logic first because it has no root-crate
+  auth/runtime/config dependencies.
+- 2026-05-05: split the stable provider pricing tables/helpers into
+  `jcode-provider-core::pricing`, leaving `src/provider/pricing.rs` as a thin facade for root-only
+  auth/env/OpenRouter-cache lookups.
+- Reason: provider pricing is relatively stable table/math code, but it previously lived in the main crate
+  beside high-churn provider runtime code. This creates a reusable cache boundary without moving the
+  `Provider` trait or network implementations prematurely.
+- Validation: `cargo test -p jcode-provider-core --quiet`, `cargo test -p jcode pricing:: --quiet`,
+  `cargo check -p jcode --quiet`, and `cargo check -p jcode --features embeddings --quiet` pass.
+- 2026-05-05: moved provider failover prompt/decision/classifier contracts and provider
+  selection/fallback-order contracts into `jcode-provider-core`, leaving root provider modules as
+  facades for env/runtime/account state. This continues shrinking `src/provider/mod.rs` support
+  surfaces toward an eventual `jcode-provider` runtime crate.
+- Validation: `cargo test -p jcode-provider-core --quiet`, focused root provider selection/failover
+  tests, and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved the Copilot `PremiumMode` provider-control enum into `jcode-provider-core`
+  and re-exported it from the root/Copilot facades. The `Provider` trait no longer needs to name
+  the root `copilot` module for this control surface.
+- Validation: `cargo check -p jcode-provider-core --quiet` and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved provider-native tool result DTOs/sender aliases into `jcode-provider-core`.
+  The global `Provider` trait no longer has to expose types owned by the root Claude module.
+- Validation: `cargo check -p jcode-provider-core --quiet` and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved stable provider model constants, static provider/model classification,
+  Copilot model-name normalization, and fallback context-window heuristics into
+  `jcode-provider-core::models`. Root `src/provider/models.rs` now layers dynamic account catalogs,
+  runtime availability, and cache hydration on top of those core helpers.
+- Validation: `cargo test -p jcode-provider-core models:: --quiet`,
+  `cargo check -p jcode-provider-core --quiet`, and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved the global `Provider` trait and `EventStream` alias into `jcode-provider-core`.
+  Root `src/provider/mod.rs` now re-exports the contract while continuing to own concrete provider
+  implementations and `MultiProvider` composition. This is the main provider seam needed before a
+  future `jcode-provider` runtime crate can be introduced safely.
+- Validation: `cargo check -p jcode-provider-core --quiet` and `cargo check -p jcode --quiet` pass.
+- Warm-only touched-file benchmark on `src/provider/mod.rs` after the provider-core seam: first
+  self-dev build was a noisy artifact-producing **140.739s**, then the immediate rerun measured
+  **12.101s** warm `cargo check` and **27.433s** warm self-dev build. Treat the rerun as the
+  comparable steady-state datapoint.
+
+- 2026-05-05: moved the stable provider-facing `ToolDefinition` contract from `src/message.rs` into
+  `jcode-message-types` and re-exported it from the root message facade. This is a prerequisite for
+  shrinking the provider trait and tool registry surfaces away from root-crate-only message types.
+- Validation: `cargo test -p jcode-message-types --quiet` and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: introduced `jcode-tool-types` for stable tool execution output DTOs and moved
+  `ToolOutput` / `ToolImage` out of `src/tool/mod.rs`. Root tool modules continue using the same
+  names via a facade re-export, but provider/agent/server seams can now depend on a narrow tool
+  result contract without depending on the root tool registry.
+- Validation: `cargo check -p jcode-tool-types --quiet`, `cargo test -p jcode-tool-types --quiet`,
+  and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: added `jcode-tool-core` for runtime tool contracts and moved `Tool`, `ToolContext`,
+  `ToolExecutionMode`, and `StdinInputRequest` out of `src/tool/mod.rs`. `jcode-tool-types` stays
+  DTO-only, while channel/runtime-bearing context lives in the runtime-contract crate instead of
+  contaminating pure type crates.
+- 2026-05-05: also moved the shared tool intent schema helper into `jcode-tool-core`, keeping the
+  root `src/tool/mod.rs` module focused on registry composition rather than shared schema contracts.
+- Validation: `cargo check -p jcode-tool-core --quiet`, `cargo check -p jcode-tool-types --quiet`,
+  and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved provider streaming contracts `StreamEvent` and `ConnectionPhase` from
+  `src/message.rs` into `jcode-message-types`, again preserving root facade re-exports. Together
+  with `ToolDefinition`, this materially reduces the root-only surface of the provider trait and
+  prepares a future `jcode-provider` crate.
+- Validation: `cargo check -p jcode-message-types --quiet`, `cargo test -p jcode-message-types --quiet`,
+  and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved core conversation DTOs `Message`, `ContentBlock`, `Role`, and `CacheControl`
+  into `jcode-message-types`, while keeping root-only redaction/generated-image/session helpers in
+  `src/message.rs`. Provider and agent contracts can now refer to message data through the lower
+  type crate rather than the root crate facade.
+- Validation: `cargo check -p jcode-message-types --quiet`, `cargo test -p jcode-message-types --quiet`,
+  and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved pure message helpers for fresh-user-turn detection, stable message hashing,
+  tool ID sanitization, and the missing-tool-output constant into `jcode-message-types`. Root keeps
+  secret redaction and generated-image visual context because those still depend on regex/env/fs/base64
+  integration details.
+- Validation: `cargo check -p jcode-message-types --quiet`, focused root message helper tests, and
+  `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved the provider split-system dynamic-context insertion helper and its tests into
+  `jcode-message-types`. This removes another pure message transformation from `src/provider/mod.rs`
+  and keeps preparing the provider trait for an eventual runtime crate split.
+- Validation: `cargo test -p jcode-message-types dynamic_context --quiet`,
+  `cargo check -p jcode-message-types --quiet`, and `cargo check -p jcode --quiet` pass.
+
+- 2026-05-05: moved the server lightweight-control request classifier from
+  `src/server/client_lifecycle.rs` into `jcode-protocol::Request::is_lightweight_control_request`.
+  This is a small but directionally important server seam: protocol-shape policy belongs with the
+  protocol contract, while the large client lifecycle module keeps runtime dispatch.
+- Validation: `cargo check -p jcode-protocol --quiet` and `cargo check -p jcode --quiet` pass.
+- 2026-05-05: moved swarm task-control action parsing, assignment-message formatting, and status
+  eligibility/error policy from `src/server/comm_control.rs` into `jcode-plan`. This keeps plan/task
+  policy next to the plan graph/status helpers and leaves server comm control focused on runtime I/O
+  and mutation orchestration.
+- Validation: `cargo test -p jcode-plan --quiet` and `cargo check -p jcode --quiet` pass.
 
 - 2026-03-30: moved the workspace-map subsystem into the new `crates/jcode-tui-workspace` crate.
 - Boundary decision: move **workspace map data/model + widget rendering** first, while keeping the surrounding
@@ -376,7 +515,7 @@ Current provider-boundary stance:
 - **Done:** `jcode-provider-openrouter` for OpenRouter-specific catalog/cache/ranking/model-spec support.
 - **Done:** `jcode-provider-gemini` for Gemini Code Assist schema/types and pure model support helpers.
 - **Done:** `jcode-provider-core::openai_schema` for pure OpenAI schema adaptation / strict-normalization helpers.
-- **Not done yet:** `Provider` trait / `EventStream` extraction and fully standalone provider impl crates.
+- **Not done yet:** `Provider` trait / `EventStream` extraction and fully independent provider impl crates.
 - **Reason:** the trait side still depends on `message.rs`, auth flows, runtime behavior, and provider-specific
   streaming logic; the current staged split avoids turning that unstable seam into a low-value high-churn crate.
 
@@ -404,11 +543,35 @@ scripts/dev_cargo.sh build --profile selfdev -p jcode --bin jcode --quiet
 scripts/dev_cargo.sh --print-setup
 ```
 
+For narrower feature-set probes, set `JCODE_DEV_FEATURE_PROFILE` instead of spelling out Cargo flags:
+
+```bash
+JCODE_DEV_FEATURE_PROFILE=minimal scripts/dev_cargo.sh check -p jcode --lib --quiet
+JCODE_DEV_FEATURE_PROFILE=pdf scripts/dev_cargo.sh build --profile selfdev -p jcode --bin jcode --quiet
+JCODE_DEV_FEATURE_PROFILE=full scripts/dev_cargo.sh check -p jcode --lib --quiet
+```
+
+This is especially useful because default `jcode` enables both `embeddings` and `pdf`; in the current
+dependency graph, the root tree is about **3740** lines with defaults, **1133** with PDF-only, and **1106**
+with no default features. Use these profiles for measurements and local probes, while keeping full/default
+builds in CI and release paths where feature coverage matters.
+
+Developer-only root binaries are opt-in to keep `--all-targets` inner loops from compiling extra probe
+entrypoints by default:
+
+```bash
+cargo run --features dev-bins --bin tui_bench -- --help
+cargo run --features dev-bins --bin session_memory_bench -- --help
+cargo run --features dev-bins --bin mermaid_side_panel_probe -- --help
+cargo check --all-targets -p jcode --features dev-bins --quiet
+```
+
 The wrapper:
 
 - uses `sccache` automatically when available
 - prefers `lld` locally on Linux x86_64
 - uses the fast `selfdev` Cargo profile for self-dev build/reload workflows
+- can inject a named feature profile via `JCODE_DEV_FEATURE_PROFILE` unless explicit feature args are present
 - avoids hard-forcing a linker mode that may be broken on a given machine
 - can print the currently selected cache/linker setup with `--print-setup`
 

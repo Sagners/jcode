@@ -34,162 +34,18 @@ mod websearch;
 mod write;
 
 use crate::compaction::CompactionManager;
-use crate::message::ToolDefinition;
 use crate::provider::Provider;
 use crate::skill::SkillRegistry;
 use anyhow::Result;
-use async_trait::async_trait;
-use jcode_agent_runtime::InterruptSignal;
+use jcode_message_types::ToolDefinition;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const TOOL_INTENT_DESCRIPTION: &str = concat!(
-    "Short natural-language label explaining why this tool call is being made. ",
-    "Used for compact UI display only. Optional; do not use this instead of required tool parameters."
-);
-
-pub(crate) fn intent_schema_property() -> Value {
-    serde_json::json!({
-        "type": "string",
-        "description": TOOL_INTENT_DESCRIPTION,
-    })
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolOutput {
-    pub output: String,
-    pub title: Option<String>,
-    pub metadata: Option<Value>,
-    pub images: Vec<ToolImage>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolImage {
-    pub media_type: String,
-    pub data: String,
-    pub label: Option<String>,
-}
-
-impl ToolOutput {
-    pub fn new(output: impl Into<String>) -> Self {
-        Self {
-            output: output.into(),
-            title: None,
-            metadata: None,
-            images: Vec::new(),
-        }
-    }
-
-    pub fn with_title(mut self, title: impl Into<String>) -> Self {
-        self.title = Some(title.into());
-        self
-    }
-
-    pub fn with_metadata(mut self, metadata: Value) -> Self {
-        self.metadata = Some(metadata);
-        self
-    }
-
-    pub fn with_image(mut self, media_type: impl Into<String>, data: impl Into<String>) -> Self {
-        self.images.push(ToolImage {
-            media_type: media_type.into(),
-            data: data.into(),
-            label: None,
-        });
-        self
-    }
-
-    pub fn with_labeled_image(
-        mut self,
-        media_type: impl Into<String>,
-        data: impl Into<String>,
-        label: impl Into<String>,
-    ) -> Self {
-        self.images.push(ToolImage {
-            media_type: media_type.into(),
-            data: data.into(),
-            label: Some(label.into()),
-        });
-        self
-    }
-}
-
-/// A request for stdin input from a running command
-pub struct StdinInputRequest {
-    pub request_id: String,
-    pub prompt: String,
-    pub is_password: bool,
-    pub response_tx: tokio::sync::oneshot::Sender<String>,
-}
-
-#[derive(Clone)]
-pub struct ToolContext {
-    pub session_id: String,
-    pub message_id: String,
-    pub tool_call_id: String,
-    pub working_dir: Option<PathBuf>,
-    pub stdin_request_tx: Option<tokio::sync::mpsc::UnboundedSender<StdinInputRequest>>,
-    pub graceful_shutdown_signal: Option<InterruptSignal>,
-    pub execution_mode: ToolExecutionMode,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolExecutionMode {
-    AgentTurn,
-    Direct,
-}
-
-impl ToolContext {
-    pub fn for_subcall(&self, tool_call_id: String) -> Self {
-        Self {
-            session_id: self.session_id.clone(),
-            message_id: self.message_id.clone(),
-            tool_call_id,
-            working_dir: self.working_dir.clone(),
-            stdin_request_tx: self.stdin_request_tx.clone(),
-            graceful_shutdown_signal: self.graceful_shutdown_signal.clone(),
-            execution_mode: self.execution_mode,
-        }
-    }
-
-    pub fn resolve_path(&self, path: &Path) -> PathBuf {
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else if let Some(ref base) = self.working_dir {
-            base.join(path)
-        } else {
-            path.to_path_buf()
-        }
-    }
-}
-
-/// A tool that can be executed by the agent
-#[async_trait]
-pub trait Tool: Send + Sync {
-    /// Tool name (must match what's sent to the API)
-    fn name(&self) -> &str;
-
-    /// Human-readable description
-    fn description(&self) -> &str;
-
-    /// JSON Schema for the input parameters
-    fn parameters_schema(&self) -> Value;
-
-    /// Execute the tool with the given input
-    async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput>;
-
-    /// Convert to API tool definition
-    fn to_definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: self.name().to_string(),
-            description: self.description().to_string(),
-            input_schema: self.parameters_schema(),
-        }
-    }
-}
+pub(crate) use jcode_tool_core::intent_schema_property;
+pub use jcode_tool_core::{StdinInputRequest, Tool, ToolContext, ToolExecutionMode};
+pub use jcode_tool_types::{ToolImage, ToolOutput};
 
 /// Registry of available tools (Arc-wrapped for sharing)
 ///

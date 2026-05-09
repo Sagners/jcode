@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 
 #[test]
 fn sanitize_tool_id_alphanumeric_passthrough() {
@@ -12,6 +13,43 @@ fn sanitize_tool_id_alphanumeric_passthrough() {
         sanitize_tool_id("call_1234567890_9876543210"),
         "call_1234567890_9876543210"
     );
+}
+
+#[test]
+fn generated_image_visual_context_blocks_attach_safe_image() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let image_path = dir.path().join("generated.png");
+    ::image::RgbaImage::from_pixel(2, 1, ::image::Rgba([0, 255, 0, 255]))
+        .save(&image_path)
+        .expect("write png");
+
+    let blocks = generated_image_visual_context_blocks(
+        image_path.to_str().expect("utf8 path"),
+        Some("/tmp/generated.json"),
+        "png",
+        Some("a small green generated image"),
+    )
+    .expect("safe generated image should attach");
+
+    assert_eq!(blocks.len(), 2);
+    match &blocks[0] {
+        ContentBlock::Text { text, .. } => {
+            assert!(text.starts_with("<system-reminder>"));
+            assert!(text.contains("attached the image pixels as visual context"));
+            assert!(text.contains("a small green generated image"));
+        }
+        other => panic!("expected text reminder, got {other:?}"),
+    }
+    match &blocks[1] {
+        ContentBlock::Image { media_type, data } => {
+            assert_eq!(media_type, "image/png");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .expect("valid base64 image");
+            assert!(!bytes.is_empty());
+        }
+        other => panic!("expected image block, got {other:?}"),
+    }
 }
 
 #[test]
@@ -28,6 +66,60 @@ fn tool_call_intent_from_input_trims_optional_intent() {
         ToolCall::intent_from_input(&serde_json::json!({"intent": "  "})),
         None
     );
+}
+
+#[test]
+fn tool_call_normalizes_non_object_input_to_empty_object() {
+    for input in [
+        serde_json::Value::Null,
+        serde_json::json!(20),
+        serde_json::json!(false),
+        serde_json::json!(["not", "an", "object"]),
+        serde_json::json!("not an object"),
+    ] {
+        assert_eq!(
+            ToolCall::normalize_input_to_object(input),
+            serde_json::json!({})
+        );
+    }
+
+    assert_eq!(
+        ToolCall::normalize_input_to_object(serde_json::json!({"path":"README.md"})),
+        serde_json::json!({"path":"README.md"})
+    );
+}
+
+#[test]
+fn tool_call_validation_rejects_empty_name_and_non_object_input() {
+    let empty_name = ToolCall {
+        id: "call_1".to_string(),
+        name: "".to_string(),
+        input: serde_json::json!({}),
+        intent: None,
+    };
+    assert_eq!(
+        empty_name.validation_error().as_deref(),
+        Some("Invalid tool call: tool name must not be empty.")
+    );
+
+    let primitive_args = ToolCall {
+        id: "call_2".to_string(),
+        name: "read".to_string(),
+        input: serde_json::json!(20),
+        intent: None,
+    };
+    assert_eq!(
+        primitive_args.validation_error().as_deref(),
+        Some("Invalid tool call for 'read': arguments must be a JSON object, got number.")
+    );
+
+    let valid = ToolCall {
+        id: "call_3".to_string(),
+        name: "read".to_string(),
+        input: serde_json::json!({"path":"README.md"}),
+        intent: None,
+    };
+    assert_eq!(valid.validation_error(), None);
 }
 
 #[test]

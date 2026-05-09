@@ -27,7 +27,9 @@ pub enum LoginProviderTarget {
     Jcode,
     Claude,
     OpenAi,
+    OpenAiApiKey,
     OpenRouter,
+    Bedrock,
     Azure,
     OpenAiCompatible(OpenAiCompatibleProfile),
     Cursor,
@@ -44,6 +46,7 @@ pub enum LoginProviderAuthStateKey {
     Anthropic,
     OpenAi,
     Azure,
+    Bedrock,
     OpenRouterLike,
     Copilot,
     Gemini,
@@ -224,6 +227,28 @@ pub const DEEPSEEK_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     requires_api_key: true,
 };
 
+pub const COMTEGRA_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
+    id: "comtegra",
+    display_name: "Comtegra GPU Cloud",
+    api_base: "https://llm.comtegra.cloud/v1",
+    api_key_env: "COMTEGRA_API_KEY",
+    env_file: "comtegra.env",
+    setup_url: "https://docs.cgc.comtegra.cloud/llm-api",
+    default_model: Some("glm-51-nvfp4"),
+    requires_api_key: true,
+};
+
+pub const FPT_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
+    id: "fpt",
+    display_name: "FPT AI Marketplace",
+    api_base: "https://mkp-api.fptcloud.com",
+    api_key_env: "FPT_API_KEY",
+    env_file: "fpt.env",
+    setup_url: "https://ai-docs.fptcloud.com/api-reference/ai-marketplace/api-reference/api-integration-large-language-model-md",
+    default_model: Some("GLM-5.1"),
+    requires_api_key: true,
+};
+
 pub const FIRMWARE_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     id: "firmware",
     display_name: "Firmware",
@@ -360,9 +385,9 @@ pub const MINIMAX_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     id: "minimax",
     display_name: "MiniMax",
     api_base: "https://api.minimax.io/v1",
-    api_key_env: "MINIMAX_API_KEY",
+    api_key_env: "OPENAI_API_KEY",
     env_file: "minimax.env",
-    setup_url: "https://platform.minimax.io/docs/api-reference/text-openai-api",
+    setup_url: "https://platform.minimax.io/docs/guides/text-generation",
     default_model: Some("MiniMax-M2.7"),
     requires_api_key: true,
 };
@@ -444,7 +469,7 @@ pub const OPENAI_COMPAT_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfi
     requires_api_key: true,
 };
 
-const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 28] = [
+const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 30] = [
     OPENCODE_PROFILE,
     OPENCODE_GO_PROFILE,
     ZAI_PROFILE,
@@ -456,6 +481,8 @@ const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 28] = [
     BASETEN_PROFILE,
     CORTECS_PROFILE,
     DEEPSEEK_PROFILE,
+    COMTEGRA_PROFILE,
+    FPT_PROFILE,
     FIRMWARE_PROFILE,
     HUGGING_FACE_PROFILE,
     MOONSHOT_PROFILE,
@@ -527,6 +554,24 @@ pub const OPENAI_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescript
     order: LoginProviderSurfaceOrder::new(Some(2), Some(2), Some(2), Some(2), Some(2)),
 };
 
+pub const OPENAI_API_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
+    id: "openai-api",
+    display_name: "OpenAI API",
+    auth_kind: LoginProviderAuthKind::ApiKey,
+    auth_state_key: LoginProviderAuthStateKey::OpenAi,
+    auth_status_method: "API key",
+    aliases: &[
+        "openai-key",
+        "openai-apikey",
+        "openai-platform",
+        "platform-openai",
+    ],
+    menu_detail: "native OpenAI API key, pay-per-token",
+    recommended: false,
+    target: LoginProviderTarget::OpenAiApiKey,
+    order: LoginProviderSurfaceOrder::new(Some(99), Some(99), Some(99), Some(99), Some(99)),
+};
+
 pub const OPENROUTER_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
     id: "openrouter",
     display_name: "OpenRouter",
@@ -538,6 +583,19 @@ pub const OPENROUTER_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDesc
     recommended: false,
     target: LoginProviderTarget::OpenRouter,
     order: LoginProviderSurfaceOrder::new(Some(4), Some(3), Some(4), Some(3), Some(3)),
+};
+
+pub const BEDROCK_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
+    id: "bedrock",
+    display_name: "AWS Bedrock",
+    auth_kind: LoginProviderAuthKind::ApiKey,
+    auth_state_key: LoginProviderAuthStateKey::Bedrock,
+    auth_status_method: "API key / AWS credentials",
+    aliases: &["aws-bedrock", "aws_bedrock"],
+    menu_detail: "Bedrock API key or AWS credentials, pay-per-token",
+    recommended: false,
+    target: LoginProviderTarget::Bedrock,
+    order: LoginProviderSurfaceOrder::new(Some(5), Some(4), None, None, Some(4)),
 };
 
 pub const AZURE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -702,6 +760,32 @@ pub const DEEPSEEK_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescri
     order: LoginProviderSurfaceOrder::new(Some(21), Some(21), Some(21), Some(21), Some(21)),
 };
 
+pub const COMTEGRA_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
+    id: "comtegra",
+    display_name: "Comtegra GPU Cloud",
+    auth_kind: LoginProviderAuthKind::ApiKey,
+    auth_state_key: LoginProviderAuthStateKey::OpenRouterLike,
+    auth_status_method: "API key",
+    aliases: &["cgc", "comtegra-gpu-cloud"],
+    menu_detail: "OpenAI-compatible LLM API",
+    recommended: false,
+    target: LoginProviderTarget::OpenAiCompatible(COMTEGRA_PROFILE),
+    order: LoginProviderSurfaceOrder::new(Some(22), Some(22), Some(22), Some(22), Some(22)),
+};
+
+pub const FPT_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
+    id: "fpt",
+    display_name: "FPT AI Marketplace",
+    auth_kind: LoginProviderAuthKind::ApiKey,
+    auth_state_key: LoginProviderAuthStateKey::OpenRouterLike,
+    auth_status_method: "API key",
+    aliases: &["fpt-ai", "fptcloud", "fpt-cloud"],
+    menu_detail: "OpenAI-compatible FPT AI Marketplace API",
+    recommended: false,
+    target: LoginProviderTarget::OpenAiCompatible(FPT_PROFILE),
+    order: LoginProviderSurfaceOrder::new(Some(23), Some(23), Some(23), Some(23), Some(23)),
+};
+
 pub const FIRMWARE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
     id: "firmware",
     display_name: "Firmware",
@@ -712,7 +796,7 @@ pub const FIRMWARE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescri
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(FIRMWARE_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(22), Some(22), Some(22), Some(22), Some(22)),
+    order: LoginProviderSurfaceOrder::new(Some(24), Some(24), Some(24), Some(24), Some(24)),
 };
 
 pub const HUGGING_FACE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -725,7 +809,7 @@ pub const HUGGING_FACE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDe
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(HUGGING_FACE_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(23), Some(23), Some(23), Some(23), Some(23)),
+    order: LoginProviderSurfaceOrder::new(Some(25), Some(25), Some(25), Some(25), Some(25)),
 };
 
 pub const MOONSHOT_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -738,7 +822,7 @@ pub const MOONSHOT_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescri
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(MOONSHOT_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(24), Some(24), Some(24), Some(24), Some(24)),
+    order: LoginProviderSurfaceOrder::new(Some(26), Some(26), Some(26), Some(26), Some(26)),
 };
 
 pub const NEBIUS_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -751,7 +835,7 @@ pub const NEBIUS_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescript
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(NEBIUS_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(25), Some(25), Some(25), Some(25), Some(25)),
+    order: LoginProviderSurfaceOrder::new(Some(27), Some(27), Some(27), Some(27), Some(27)),
 };
 
 pub const SCALEWAY_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -764,7 +848,7 @@ pub const SCALEWAY_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescri
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(SCALEWAY_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(26), Some(26), Some(26), Some(26), Some(26)),
+    order: LoginProviderSurfaceOrder::new(Some(28), Some(28), Some(28), Some(28), Some(28)),
 };
 
 pub const STACKIT_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -777,7 +861,7 @@ pub const STACKIT_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescrip
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(STACKIT_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(27), Some(27), Some(27), Some(27), Some(27)),
+    order: LoginProviderSurfaceOrder::new(Some(29), Some(29), Some(29), Some(29), Some(29)),
 };
 
 pub const GROQ_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -790,7 +874,7 @@ pub const GROQ_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(GROQ_PROFILE),
-    order: LoginProviderSurfaceOrder::new(Some(28), Some(28), Some(28), Some(28), Some(28)),
+    order: LoginProviderSurfaceOrder::new(Some(30), Some(30), Some(30), Some(30), Some(30)),
 };
 
 pub const MISTRAL_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -988,12 +1072,14 @@ pub const GOOGLE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescript
     order: LoginProviderSurfaceOrder::new(Some(13), None, None, None, None),
 };
 
-const LOGIN_PROVIDERS: [LoginProviderDescriptor; 39] = [
+const LOGIN_PROVIDERS: [LoginProviderDescriptor; 43] = [
     AUTO_IMPORT_LOGIN_PROVIDER,
     CLAUDE_LOGIN_PROVIDER,
     OPENAI_LOGIN_PROVIDER,
+    OPENAI_API_LOGIN_PROVIDER,
     JCODE_LOGIN_PROVIDER,
     OPENROUTER_LOGIN_PROVIDER,
+    BEDROCK_LOGIN_PROVIDER,
     AZURE_LOGIN_PROVIDER,
     OPENCODE_LOGIN_PROVIDER,
     OPENCODE_GO_LOGIN_PROVIDER,
@@ -1006,6 +1092,8 @@ const LOGIN_PROVIDERS: [LoginProviderDescriptor; 39] = [
     BASETEN_LOGIN_PROVIDER,
     CORTECS_LOGIN_PROVIDER,
     DEEPSEEK_LOGIN_PROVIDER,
+    COMTEGRA_LOGIN_PROVIDER,
+    FPT_LOGIN_PROVIDER,
     FIRMWARE_LOGIN_PROVIDER,
     HUGGING_FACE_LOGIN_PROVIDER,
     MOONSHOT_LOGIN_PROVIDER,
@@ -1221,6 +1309,12 @@ mod tests {
     }
 
     #[test]
+    fn minimax_profile_uses_official_openai_compatible_configuration() {
+        assert_eq!(MINIMAX_PROFILE.api_base, "https://api.minimax.io/v1");
+        assert_eq!(MINIMAX_PROFILE.api_key_env, "OPENAI_API_KEY");
+    }
+
+    #[test]
     fn matrix_login_provider_aliases_resolve_to_canonical_ids() {
         assert_eq!(
             resolve_login_provider("subscription").map(|provider| provider.id),
@@ -1347,8 +1441,8 @@ mod tests {
             Some("claude")
         );
         assert_eq!(
-            resolve_login_selection("15", &providers).map(|provider| provider.id),
-            Some("cursor")
+            resolve_login_selection("6", &providers).map(|provider| provider.id),
+            Some("bedrock")
         );
         assert_eq!(
             resolve_login_selection("compat", &providers).map(|provider| provider.id),
@@ -1378,15 +1472,15 @@ mod tests {
         );
         assert_eq!(
             resolve_login_selection("7", &providers).map(|provider| provider.id),
+            Some("bedrock")
+        );
+        assert_eq!(
+            resolve_login_selection("8", &providers).map(|provider| provider.id),
             Some("azure")
         );
         assert_eq!(
-            resolve_login_selection("17", &providers).map(|provider| provider.id),
-            Some("gemini")
-        );
-        assert_eq!(
-            resolve_login_selection("18", &providers).map(|provider| provider.id),
-            Some("google")
+            resolve_login_selection("bedrock", &providers).map(|provider| provider.id),
+            Some("bedrock")
         );
     }
 }

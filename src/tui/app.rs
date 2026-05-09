@@ -1,3 +1,4 @@
+use super::DisplayMessageRoleExt;
 use super::keybind::{
     CenteredToggleKeys, ModelSwitchKeys, OptionalBinding, ScrollKeys, WorkspaceNavigationKeys,
 };
@@ -26,6 +27,7 @@ use crossterm::event::{
 use debug::DebugTrace;
 use futures::StreamExt;
 use helpers::*;
+use jcode_tui_messages::DisplayMessage;
 use ratatui::DefaultTerminal;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -36,6 +38,16 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::interval;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppRuntimeMode {
+    /// Normal product TUI. The client renders state owned by the jcode server.
+    RemoteClient,
+    /// Deterministic playback of recorded session/server events. Never calls live providers.
+    Replay,
+    /// Local in-process harness used by unit tests and transitional UI fixtures only.
+    TestHarness,
+}
 
 mod auth;
 mod auth_account_picker_saved_accounts;
@@ -292,6 +304,8 @@ pub enum ProcessingStatus {
     Thinking(Instant),
     /// Receiving streaming response
     Streaming,
+    /// Waiting for network connectivity before retrying an interrupted request
+    WaitingForNetwork { listener: String },
     /// Executing a tool
     RunningTool(String),
 }
@@ -330,18 +344,6 @@ impl RemoteStartupPhase {
 
         format!("{base} {elapsed_str}")
     }
-}
-
-/// A message in the conversation for display
-#[derive(Clone)]
-pub struct DisplayMessage {
-    pub role: String,
-    pub content: String,
-    pub tool_calls: Vec<String>,
-    pub duration_secs: Option<f32>,
-    pub title: Option<String>,
-    /// Full tool call data (for role="tool" messages)
-    pub tool_data: Option<ToolCall>,
 }
 
 pub(super) fn reload_persisted_background_tasks_note(session_id: &str) -> String {
@@ -468,6 +470,34 @@ pub(super) struct CompactedHistoryLazyState {
     pub pending_request_visible: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OvernightAutoPokeFingerprint {
+    pub run_id: String,
+    pub status: String,
+    pub last_activity_at: String,
+    pub events_len: usize,
+    pub task_total: usize,
+    pub task_completed: usize,
+    pub task_active: usize,
+    pub task_blocked: usize,
+    pub task_validated: usize,
+    pub session_message_count: usize,
+    pub review_notes_mtime: Option<u64>,
+    pub validation_files: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct OvernightAutoPokeState {
+    pub run_id: String,
+    pub last_fingerprint: OvernightAutoPokeFingerprint,
+    pub stalled_turns: u8,
+    pub error_turns: u8,
+    pub total_pokes_sent: u16,
+    pub diagnostic_sent: bool,
+    pub morning_report_poked: bool,
+    pub final_wrap_poked: bool,
+}
+
 /// State for an in-progress OAuth/API-key login flow triggered by `/login`.
 /// TUI Application state
 pub struct App {
@@ -586,6 +616,8 @@ pub struct App {
     pending_turn: bool,
     // When armed by /poke, automatically continue prompting until todos are complete.
     auto_poke_incomplete_todos: bool,
+    // When armed by /overnight, automatically continue guarded follow-up turns until wake/wrap.
+    overnight_auto_poke: Option<OvernightAutoPokeState>,
     // Pending cross-provider resend after a failover warning/countdown.
     pending_provider_failover: Option<PendingProviderFailover>,
     // Local session file write to flush once the first "sending" frame is visible.
@@ -679,6 +711,7 @@ pub struct App {
     current_message_id: Option<u64>,
     // Whether running in remote mode
     is_remote: bool,
+    runtime_mode: AppRuntimeMode,
     // Remote rewind/undo request waiting for the server's replacement History payload.
     pending_remote_rewind_notice: Option<PendingRemoteRewindNotice>,
     // Server was just spawned - allow initial connection retries in run_remote
@@ -765,6 +798,7 @@ pub struct App {
     // Scroll offset for pinned diff pane
     diff_pane_scroll: usize,
     diff_pane_scroll_x: i32,
+    side_panel_image_zoom_percent: u8,
     diff_pane_focus: bool,
     diff_pane_auto_scroll: bool,
     side_panel: crate::side_panel::SidePanelSnapshot,
@@ -799,6 +833,8 @@ pub struct App {
     // Cached model picker entries. Building these can require hydrating large provider catalogs.
     model_picker_cache: Option<ModelPickerCache>,
     model_picker_catalog_revision: u64,
+    // Short-lived provider boost after login so newly authenticated models surface in /models.
+    recent_authenticated_provider: Option<(String, Instant)>,
     pending_model_picker_load: Option<PendingModelPickerLoad>,
     model_picker_load_request_id: u64,
     // Pending model switch from picker (for remote mode async processing)
@@ -935,13 +971,32 @@ pub struct App {
     last_overnight_card_refresh: Option<Instant>,
 }
 
-/// A placeholder provider for remote mode (never actually called)
-struct NullProvider;
+/// Inert provider used by runtime modes whose output is supplied by another source.
+///
+/// Remote clients render server events. Replay renders recorded events. Neither mode may call a
+/// live provider from the TUI process.
+struct InertRuntimeProvider {
+    runtime_mode: AppRuntimeMode,
+}
+
+impl InertRuntimeProvider {
+    fn new(runtime_mode: AppRuntimeMode) -> Self {
+        Self { runtime_mode }
+    }
+
+    fn provider_label(&self) -> &'static str {
+        match self.runtime_mode {
+            AppRuntimeMode::RemoteClient => "remote",
+            AppRuntimeMode::Replay => "replay",
+            AppRuntimeMode::TestHarness => "test-harness",
+        }
+    }
+}
 
 #[async_trait::async_trait]
-impl Provider for NullProvider {
+impl Provider for InertRuntimeProvider {
     fn name(&self) -> &str {
-        "remote"
+        self.provider_label()
     }
     fn model(&self) -> String {
         "unknown".to_string()
@@ -955,12 +1010,13 @@ impl Provider for NullProvider {
         _session_id: Option<&str>,
     ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamEvent>> + Send>>> {
         Err(anyhow::anyhow!(
-            "NullProvider cannot be used for completion"
+            "{} runtime does not allow live provider completion from the TUI",
+            self.provider_label()
         ))
     }
 
     fn fork(&self) -> Arc<dyn Provider> {
-        Arc::new(NullProvider)
+        Arc::new(InertRuntimeProvider::new(self.runtime_mode))
     }
 }
 
@@ -1299,7 +1355,7 @@ impl App {
     }
 
     fn kv_cache_provider_name(&self) -> String {
-        if self.is_remote || self.is_replay {
+        if self.uses_server_or_replay_metadata() {
             self.remote_provider_name
                 .clone()
                 .unwrap_or_else(|| self.provider.name().to_string())
@@ -1309,7 +1365,7 @@ impl App {
     }
 
     fn kv_cache_provider_model(&self) -> String {
-        if self.is_remote || self.is_replay {
+        if self.uses_server_or_replay_metadata() {
             self.remote_provider_model
                 .clone()
                 .unwrap_or_else(|| self.provider.model())

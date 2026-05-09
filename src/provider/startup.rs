@@ -86,6 +86,7 @@ impl MultiProvider {
         let has_antigravity_creds = auth::antigravity::load_tokens().is_ok();
         let has_gemini_creds = auth::gemini::load_tokens().is_ok();
         let has_cursor_creds = matches!(auth_status.cursor, auth::AuthState::Available);
+        let has_bedrock_creds = bedrock::BedrockProvider::has_credentials();
         let has_openrouter_creds = openrouter::OpenRouterProvider::has_credentials();
 
         let use_claude_cli = std::env::var("JCODE_USE_CLAUDE_CLI")
@@ -153,7 +154,7 @@ impl MultiProvider {
         };
 
         let antigravity_provider = if has_antigravity_creds {
-            Some(Arc::new(antigravity::AntigravityCliProvider::new()))
+            Some(Arc::new(antigravity::AntigravityProvider::new()))
         } else {
             None
         };
@@ -166,6 +167,12 @@ impl MultiProvider {
 
         let cursor_provider = if has_cursor_creds {
             Some(Arc::new(cursor::CursorCliProvider::new()))
+        } else {
+            None
+        };
+
+        let bedrock_provider = if has_bedrock_creds {
+            Some(Arc::new(bedrock::BedrockProvider::new()))
         } else {
             None
         };
@@ -208,6 +215,7 @@ impl MultiProvider {
             antigravity: antigravity_provider.is_some(),
             gemini: gemini_provider.is_some(),
             cursor: cursor_provider.is_some(),
+            bedrock: bedrock_provider.is_some(),
             openrouter: openrouter.is_some(),
             copilot_premium_zero,
         };
@@ -289,7 +297,7 @@ impl MultiProvider {
                 }
             } else {
                 crate::logging::warn(&format!(
-                    "Unknown default_provider '{}' in config (expected: claude|openai|copilot|antigravity|gemini|cursor|openrouter or an OpenAI-compatible profile such as deepseek|zai|openai-compatible)",
+                    "Unknown default_provider '{}' in config (expected: claude|openai|copilot|antigravity|gemini|cursor|bedrock|openrouter or an OpenAI-compatible profile such as deepseek|comtegra|zai|openai-compatible)",
                     pref
                 ));
             }
@@ -303,6 +311,7 @@ impl MultiProvider {
             antigravity: RwLock::new(antigravity_provider),
             gemini: RwLock::new(gemini_provider),
             cursor: RwLock::new(cursor_provider),
+            bedrock: RwLock::new(bedrock_provider),
             openrouter: RwLock::new(openrouter),
             active: RwLock::new(active),
             use_claude_cli,
@@ -311,7 +320,9 @@ impl MultiProvider {
         };
 
         if let Some(ref model) = cfg.provider.default_model {
-            if let Err(e) = result.set_model(model) {
+            if let Err(e) =
+                result.set_config_default_model(model, cfg.provider.default_provider.as_deref())
+            {
                 crate::logging::warn(&format!(
                     "Failed to apply default_model '{}' from config: {}",
                     model, e
@@ -325,7 +336,7 @@ impl MultiProvider {
         result.spawn_openai_catalog_refresh_if_needed();
         result.auto_select_active_multi_account();
         crate::logging::info(&format!(
-            "[TIMING] provider_init: claude={}, anthropic={}, openai={}, copilot={}, antigravity={}, gemini={}, cursor={}, openrouter={}, total={}ms",
+            "[TIMING] provider_init: claude={}, anthropic={}, openai={}, copilot={}, antigravity={}, gemini={}, cursor={}, bedrock={}, openrouter={}, total={}ms",
             result
                 .claude
                 .read()
@@ -358,6 +369,11 @@ impl MultiProvider {
                 .is_some(),
             result
                 .cursor
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_some(),
+            result
+                .bedrock
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .is_some(),

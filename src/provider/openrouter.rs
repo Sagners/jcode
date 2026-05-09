@@ -422,12 +422,24 @@ async fn fetch_models_from_api(
         apply_kimi_coding_agent_headers(auth.apply(client.get(&url)).await?, &api_base, None)
             .send()
             .await
-            .with_context(|| format!("Failed to fetch models from {}", api_base))?;
+            .with_context(|| {
+                format!(
+                    "Failed to send OpenAI-compatible model catalog request\n  endpoint: {}\n  auth: {}\nHint: check network connectivity, DNS/TLS, and that the base URL includes the API version (usually /v1).",
+                    url,
+                    auth.label()
+                )
+            })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = crate::util::http_error_body(response, "HTTP error").await;
-        anyhow::bail!("Model catalog API error ({}): {}", status, body);
+        anyhow::bail!(
+            "OpenAI-compatible model catalog request failed\n  endpoint: {}\n  auth: {}\n  status: {}\n  response: {}\nHint: verify the base URL includes the API version (usually /v1), the key is valid for this endpoint, and the provider supports GET /models.",
+            url,
+            auth.label(),
+            status,
+            body
+        );
     }
 
     #[derive(Deserialize)]
@@ -435,10 +447,18 @@ async fn fetch_models_from_api(
         data: Vec<ModelInfo>,
     }
 
-    let models_response: ModelsResponse = response
-        .json()
+    let raw_body = response
+        .text()
         .await
-        .context("Failed to parse models response")?;
+        .with_context(|| format!("Failed to read model catalog response body from {}", url))?;
+    let models_response: ModelsResponse = serde_json::from_str(&raw_body).with_context(|| {
+        format!(
+            "Failed to parse OpenAI-compatible model catalog response\n  endpoint: {}\n  auth: {}\n  expected: JSON object with a `data` array of model objects containing at least `id`\n  response: {}",
+            url,
+            auth.label(),
+            crate::util::truncate_str(&raw_body.trim().replace('\n', "\\n"), 1200)
+        )
+    })?;
 
     save_disk_cache(&models_response.data);
 
@@ -486,6 +506,7 @@ pub struct OpenRouterProvider {
     supports_provider_features: bool,
     supports_model_catalog: bool,
     profile_id: Option<String>,
+    max_tokens: Option<u32>,
     static_models: Vec<String>,
     static_context_limits: HashMap<String, usize>,
     send_openrouter_headers: bool,
@@ -502,6 +523,26 @@ pub struct OpenRouterProvider {
 }
 
 impl OpenRouterProvider {
+    fn configured_max_tokens(profile_id: Option<&str>) -> Option<u32> {
+        if let Ok(raw) = std::env::var("JCODE_OPENROUTER_MAX_TOKENS") {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+                return None;
+            }
+            match trimmed.parse::<u32>() {
+                Ok(0) => return None,
+                Ok(value) => return Some(value),
+                Err(_) => crate::logging::warn(&format!(
+                    "Ignoring invalid JCODE_OPENROUTER_MAX_TOKENS '{}'; expected a positive integer or auto",
+                    raw
+                )),
+            }
+        }
+
+        let _ = profile_id;
+        None
+    }
+
     pub(crate) fn supports_provider_routing_features(&self) -> bool {
         self.supports_provider_features
     }
@@ -510,6 +551,12 @@ impl OpenRouterProvider {
         profile_name: &str,
         profile: &crate::config::NamedProviderConfig,
     ) -> Result<Self> {
+        // The OpenRouter/OpenAI-compatible catalog cache helpers are currently
+        // process-env scoped. Named provider profiles are constructed directly
+        // in several CLI/TUI paths, so make sure their cache namespace is active
+        // before any model-cache reads/writes happen. Without this, a custom
+        // endpoint can accidentally display the default OpenRouter catalog.
+        crate::env::set_var("JCODE_OPENROUTER_CACHE_NAMESPACE", profile_name);
         let api_base = normalize_api_base(&profile.base_url).ok_or_else(|| {
             anyhow::anyhow!("Provider profile '{}' has invalid base_url", profile_name)
         })?;
@@ -584,6 +631,7 @@ impl OpenRouterProvider {
                     crate::config::NamedProviderType::OpenRouter
                 ),
             profile_id: Some(profile_name.to_string()),
+            max_tokens: Self::configured_max_tokens(Some(profile_name)),
             static_models,
             static_context_limits,
             send_openrouter_headers: false,
@@ -685,6 +733,7 @@ impl OpenRouterProvider {
         } else {
             ProviderRouting::default()
         };
+        let max_tokens = Self::configured_max_tokens(profile_id.as_deref());
 
         Ok(Self {
             client: crate::provider::shared_http_client(),
@@ -694,6 +743,7 @@ impl OpenRouterProvider {
             supports_provider_features,
             supports_model_catalog,
             profile_id,
+            max_tokens,
             static_models,
             static_context_limits,
             send_openrouter_headers,
@@ -856,6 +906,7 @@ impl OpenRouterProvider {
                 supports_provider_features: true,
                 supports_model_catalog: true,
                 profile_id: None,
+                max_tokens: None,
                 static_models: Vec::new(),
                 static_context_limits: HashMap::new(),
                 send_openrouter_headers: true,

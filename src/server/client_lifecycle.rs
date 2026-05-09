@@ -1,7 +1,8 @@
 use super::client_actions::{
     AgentTaskContext, NotifySessionContext, handle_agent_task, handle_compact, handle_input_shell,
-    handle_notify_session, handle_run_subagent, handle_set_feature, handle_set_subagent_model,
-    handle_split, handle_stdin_response, handle_transfer, handle_trigger_memory_extraction,
+    handle_notify_session, handle_rename_session, handle_run_subagent, handle_set_feature,
+    handle_set_subagent_model, handle_split, handle_stdin_response, handle_transfer,
+    handle_trigger_memory_extraction,
 };
 use super::client_comm::{
     handle_comm_channel_members, handle_comm_list, handle_comm_list_channels, handle_comm_message,
@@ -86,37 +87,6 @@ fn server_reload_starting() -> bool {
     matches!(
         crate::server::recent_reload_state(RELOAD_STARTING_GUARD_MAX_AGE),
         Some(state) if state.phase == crate::server::ReloadPhase::Starting
-    )
-}
-
-fn is_lightweight_control_request(request: &Request) -> bool {
-    matches!(
-        request,
-        Request::Ping { .. }
-            | Request::CommShare { .. }
-            | Request::CommRead { .. }
-            | Request::CommMessage { .. }
-            | Request::CommList { .. }
-            | Request::CommListChannels { .. }
-            | Request::CommChannelMembers { .. }
-            | Request::CommProposePlan { .. }
-            | Request::CommApprovePlan { .. }
-            | Request::CommRejectPlan { .. }
-            | Request::CommSpawn { .. }
-            | Request::CommStop { .. }
-            | Request::CommAssignRole { .. }
-            | Request::CommSummary { .. }
-            | Request::CommStatus { .. }
-            | Request::CommReport { .. }
-            | Request::CommPlanStatus { .. }
-            | Request::CommReadContext { .. }
-            | Request::CommResyncPlan { .. }
-            | Request::CommAssignTask { .. }
-            | Request::CommAssignNext { .. }
-            | Request::CommTaskControl { .. }
-            | Request::CommSubscribeChannel { .. }
-            | Request::CommUnsubscribeChannel { .. }
-            | Request::CommAwaitMembers { .. }
     )
 }
 
@@ -804,7 +774,7 @@ pub(super) async fn handle_client(
 
         match decode_request(&line) {
             Ok(request) => {
-                if is_lightweight_control_request(&request) {
+                if request.is_lightweight_control_request() {
                     handle_lightweight_control_request(
                         request,
                         Arc::clone(&writer),
@@ -1820,6 +1790,18 @@ pub(super) async fn handle_client(
 
             Request::SetCompactionMode { id, mode } => {
                 handle_set_compaction_mode(id, mode, &agent, &client_event_tx).await;
+            }
+
+            Request::RenameSession { id, title } => {
+                handle_rename_session(
+                    id,
+                    title,
+                    &agent,
+                    &client_session_id,
+                    &swarm_members,
+                    &client_event_tx,
+                )
+                .await;
             }
 
             Request::NotifyAuthChanged { id } => {

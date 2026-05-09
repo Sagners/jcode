@@ -51,7 +51,7 @@ pub struct CursorDirectTokens {
     pub source: &'static str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CursorAuthFileData {
     access_token: Option<String>,
@@ -63,6 +63,8 @@ struct CursorRefreshResponse {
     access_token: String,
     #[serde(default)]
     refresh_token: Option<String>,
+    #[serde(default)]
+    should_logout: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +95,25 @@ pub fn has_cursor_api_key() -> bool {
 /// Whether direct Cursor native auth is available without relying on cursor-agent runtime.
 pub fn has_cursor_native_auth() -> bool {
     load_access_token_from_env_or_file().is_ok() || has_cursor_vscdb_token() || has_cursor_api_key()
+}
+
+/// Check whether a trusted Cursor auth.json contains a usable direct access token.
+pub fn has_cursor_auth_file_token() -> bool {
+    let Ok(file_path) = cursor_auth_file_path() else {
+        return false;
+    };
+    if !file_path.exists()
+        || !crate::config::Config::external_auth_source_allowed_for_path(
+            CURSOR_AUTH_FILE_SOURCE_ID,
+            &file_path,
+        )
+    {
+        return false;
+    }
+
+    load_access_token_from_env_or_file()
+        .map(|tokens| tokens.source == "cursor_auth_file")
+        .unwrap_or(false)
 }
 
 pub fn preferred_external_auth_source() -> Option<ExternalCursorAuthSource> {
@@ -138,33 +159,6 @@ pub fn cursor_direct_client_version() -> String {
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty())
         .unwrap_or_else(|| CURSOR_DIRECT_CLIENT_VERSION_DEFAULT.to_string())
-}
-
-/// Resolve the Cursor Agent CLI path from the environment or default.
-pub fn cursor_agent_cli_path() -> String {
-    std::env::var("JCODE_CURSOR_CLI_PATH").unwrap_or_else(|_| "cursor-agent".to_string())
-}
-
-/// Check if `cursor-agent` CLI is available on PATH.
-pub fn has_cursor_agent_cli() -> bool {
-    super::command_available_from_env("JCODE_CURSOR_CLI_PATH", "cursor-agent")
-}
-
-/// Check whether Cursor Agent reports an authenticated local session.
-pub fn has_cursor_agent_auth() -> bool {
-    if !has_cursor_agent_cli() {
-        return false;
-    }
-
-    let mut command = Command::new(cursor_agent_cli_path());
-    command.arg("status");
-    let output = match command_output_with_timeout(&mut command, CURSOR_EXTERNAL_COMMAND_TIMEOUT) {
-        Ok(Some(output)) => output,
-        Ok(None) => return false,
-        Err(_) => return false,
-    };
-
-    status_output_indicates_authenticated(output.status.success(), &output.stdout, &output.stderr)
 }
 
 /// Check if Cursor IDE's local vscdb has an access token.
@@ -453,6 +447,51 @@ pub async fn resolve_direct_tokens(client: &Client) -> Result<CursorDirectTokens
     })
 }
 
+/// Force-refresh a resolved Cursor token set, preserving the original source label.
+pub async fn refresh_resolved_tokens(
+    client: &Client,
+    tokens: &CursorDirectTokens,
+) -> Result<CursorDirectTokens> {
+    let refresh_token = tokens
+        .refresh_token
+        .as_deref()
+        .context("Cursor token was rejected and no refresh token is available")?;
+    let mut refreshed = refresh_direct_access_token(client, refresh_token).await?;
+    refreshed.source = tokens.source;
+    if tokens.source == "cursor_auth_file" {
+        let _ = save_auth_file_tokens(&refreshed);
+    }
+    Ok(refreshed)
+}
+
+fn save_auth_file_tokens(tokens: &CursorDirectTokens) -> Result<()> {
+    let file_path = cursor_auth_file_path()?;
+    if !file_path.exists()
+        || !crate::config::Config::external_auth_source_allowed_for_path(
+            CURSOR_AUTH_FILE_SOURCE_ID,
+            &file_path,
+        )
+    {
+        return Ok(());
+    }
+    let data = CursorAuthFileData {
+        access_token: Some(tokens.access_token.clone()),
+        refresh_token: tokens.refresh_token.clone(),
+    };
+    let serialized = serde_json::to_string_pretty(&data)?;
+    std::fs::write(&file_path, format!("{}\n", serialized))
+        .with_context(|| format!("Failed to update {}", file_path.display()))?;
+    Ok(())
+}
+
+pub fn error_indicates_not_logged_in(err: &anyhow::Error) -> bool {
+    let text = format!("{err:#}").to_ascii_lowercase();
+    text.contains("error_not_logged_in")
+        || text.contains("unauthenticated")
+        || text.contains("actionrequired\":\"login")
+        || text.contains("action required: login")
+}
+
 /// Build the `x-client-key` header expected by Cursor's native API.
 pub fn client_key_for_access_token(access_token: &str) -> String {
     sha256_hex(access_token)
@@ -503,6 +542,11 @@ async fn refresh_direct_access_token(
             .json()
             .await
             .context("Failed to decode Cursor token refresh response")?;
+        if parsed.should_logout || parsed.access_token.trim().is_empty() {
+            anyhow::bail!(
+                "Cursor refresh token was rejected; Cursor requested logout/login. Re-run Cursor login, then retry auth-test."
+            );
+        }
         Ok(CursorDirectTokens {
             access_token: parsed.access_token,
             refresh_token: parsed
@@ -600,6 +644,7 @@ fn timestamp_header_now() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+#[cfg(test)]
 fn status_output_indicates_authenticated(success: bool, stdout: &[u8], stderr: &[u8]) -> bool {
     let combined = format!(
         "{}\n{}",

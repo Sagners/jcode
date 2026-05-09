@@ -121,7 +121,7 @@ fn test_model_picker_reuses_cached_entries_until_invalidated() {
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     let registry = rt.block_on(crate::tool::Registry::new(provider.clone()));
-    let mut app = App::new(provider, registry);
+    let mut app = App::new_for_test_harness(provider, registry);
     app.queue_mode = false;
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
 
@@ -162,7 +162,7 @@ fn test_model_picker_opens_loading_state_before_async_routes_complete() {
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     let registry = rt.block_on(crate::tool::Registry::new(provider.clone()));
-    let mut app = App::new(provider, registry);
+    let mut app = App::new_for_test_harness(provider, registry);
     app.queue_mode = false;
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
 
@@ -174,11 +174,16 @@ fn test_model_picker_opens_loading_state_before_async_routes_complete() {
         .expect("loading picker should open immediately");
     assert_eq!(picker.entries.len(), 1);
     assert_eq!(picker.entries[0].name, "counting-a");
-    assert!(picker.entries[0].options[0]
-        .detail
-        .contains("updating model list"));
+    assert!(
+        picker.entries[0].options[0]
+            .detail
+            .contains("updating model list")
+    );
     assert!(app.pending_model_picker_load.is_some());
-    assert_eq!(app.status_notice(), Some("Updating model list…".to_string()));
+    assert_eq!(
+        app.status_notice(),
+        Some("Updating model list…".to_string())
+    );
 
     wait_for_model_picker_load(&mut app);
     let picker = app
@@ -203,7 +208,7 @@ fn test_model_picker_does_not_cache_single_model_fallback() {
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     let registry = rt.block_on(crate::tool::Registry::new(provider.clone()));
-    let mut app = App::new(provider, registry);
+    let mut app = App::new_for_test_harness(provider, registry);
     app.queue_mode = false;
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
 
@@ -264,7 +269,7 @@ fn test_login_completed_spawns_auth_refresh_when_runtime_is_available() {
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     let registry = rt.block_on(crate::tool::Registry::new(provider.clone()));
-    let mut app = App::new(provider, registry);
+    let mut app = App::new_for_test_harness(provider, registry);
     app.queue_mode = false;
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
 
@@ -328,6 +333,14 @@ fn test_login_completed_surfaces_new_provider_models_in_local_model_picker() {
     assert!(copilot_entry.options.iter().any(|route| {
         route.provider == "Copilot" && route.api_method == "copilot" && route.available
     }));
+
+    assert!(
+        picker.entries[0]
+            .options
+            .iter()
+            .any(|route| route.provider == "Copilot" && route.detail.contains("recently added")),
+        "recently authenticated provider should be prioritized and marked in /model"
+    );
 }
 
 #[test]
@@ -454,7 +467,7 @@ fn test_local_model_picker_render_shows_antigravity_models_exactly_as_user_sees_
     let text = render_model_picker_text(&mut app, 90, 12);
 
     assert!(
-        text.contains("ITEM") && text.contains("PROVIDER") && text.contains("ACT"),
+        text.contains("MODEL") && text.contains("PROVIDER") && text.contains("METHOD"),
         "rendered /model view should include picker columns, got:
 {}",
         text
@@ -483,6 +496,121 @@ fn test_local_model_picker_render_shows_antigravity_models_exactly_as_user_sees_
 {}",
         text
     );
+}
+
+#[test]
+fn test_login_smoke_model_picker_renders_unstacked_provider_rows() {
+    let mut app = create_login_smoke_model_app();
+    let text = render_model_picker_text(&mut app, 110, 18);
+
+    assert!(
+        text.contains("MODEL") && text.contains("PROVIDER") && text.contains("METHOD"),
+        "rendered /model view should include user-visible picker columns, got:\n{}",
+        text
+    );
+    assert!(
+        text.contains("gpt-5.4")
+            && text.contains("OpenAI")
+            && text.contains("oauth")
+            && text.contains("api key"),
+        "OpenAI OAuth and API-key routes should be separately visible, got:\n{}",
+        text
+    );
+    let glm_row = text
+        .lines()
+        .find(|line| line.contains("glm-51-nvfp4"))
+        .unwrap_or("");
+    assert!(
+        glm_row.contains("Comtegra GPU Cloud") && glm_row.contains("api key") && !glm_row.contains("copilot"),
+        "Comtegra GLM row should show its provider and API-key method, got row `{}` in:\n{}",
+        glm_row,
+        text
+    );
+    assert!(
+        text.contains("glm-51-nvfp4")
+            && text.contains("Comtegra GPU Cloud")
+            && text.contains("new"),
+        "Comtegra login route should be visible and marked new, got:\n{}",
+        text
+    );
+    assert!(
+        text.contains("claude-opus-4.6") && text.contains("Copilot"),
+        "Copilot route should be visible, got:\n{}",
+        text
+    );
+    assert!(
+        text.contains("deepseek/deepseek-v4-pro") && text.contains("openrouter"),
+        "OpenRouter route should be visible, got:\n{}",
+        text
+    );
+    let deepseek_auto_row = text
+        .lines()
+        .find(|line| line.contains("deepseek/deepseek-v4-pro") && line.contains("auto"))
+        .unwrap_or("");
+    let deepseek_provider_row = text
+        .lines()
+        .find(|line| line.contains("deepseek/deepseek-v4-pro") && line.contains("DeepSeek"))
+        .unwrap_or("");
+    assert!(
+        deepseek_auto_row.contains('★'),
+        "OpenRouter auto route should carry the recommended marker, got row `{}` in:\n{}",
+        deepseek_auto_row,
+        text
+    );
+    assert!(
+        !deepseek_provider_row.contains('★'),
+        "OpenRouter provider-specific routes should not carry the recommended marker, got row `{}` in:\n{}",
+        deepseek_provider_row,
+        text
+    );
+    let kimi25_row = text
+        .lines()
+        .find(|line| line.contains("moonshotai/kimi-k2.5"))
+        .unwrap_or("");
+    assert!(
+        !kimi25_row.contains('★'),
+        "Kimi K2.5 should not be recommended, got row `{}` in:\n{}",
+        kimi25_row,
+        text
+    );
+    assert!(
+        text.contains("openai/gpt-5.5") && text.contains("OpenRouter/OpenAI"),
+        "OpenRouter endpoint routes should not look like native OpenAI API-key rows, got:\n{}",
+        text
+    );
+    assert!(
+        !text.contains("(2)"),
+        "provider routes should not be hidden behind stacked option counts, got:\n{}",
+        text
+    );
+}
+
+#[test]
+fn test_model_picker_filter_text_includes_provider_and_method() {
+    let entry = crate::tui::PickerEntry {
+        name: "glm-51-nvfp4".to_string(),
+        options: vec![crate::tui::PickerOption {
+            provider: "Comtegra GPU Cloud".to_string(),
+            api_method: "openai-compatible:comtegra".to_string(),
+            available: true,
+            detail: "https://llm.comtegra.cloud/v1".to_string(),
+            estimated_reference_cost_micros: None,
+        }],
+        action: crate::tui::PickerAction::Model,
+        selected_option: 0,
+        is_current: false,
+        is_default: false,
+        recommended: false,
+        recommendation_rank: usize::MAX,
+        old: false,
+        created_date: None,
+        effort: None,
+    };
+
+    let filter_text = crate::tui::PickerKind::Model.filter_text(&entry);
+    assert!(filter_text.contains("glm-51-nvfp4"));
+    assert!(filter_text.contains("Comtegra GPU Cloud"));
+    assert!(filter_text.contains("openai-compatible:comtegra"));
 }
 
 #[test]
@@ -895,4 +1023,42 @@ fn test_overnight_help_command_is_handled() {
     assert_eq!(msg.role, "system");
     assert!(msg.content.contains("`/overnight <hours>[h|m] [mission]`"));
     assert!(msg.content.contains("`/overnight review`"));
+}
+
+#[test]
+fn test_overnight_start_runs_as_visible_local_turn() {
+    with_temp_jcode_home(|| {
+        let mut app = create_test_app();
+        assert!(super::commands::handle_session_command(
+            &mut app,
+            "/overnight 1m hi"
+        ));
+
+        assert!(app.pending_turn, "local overnight should start a visible turn");
+        assert!(app.is_processing, "local overnight should enter processing state");
+        assert!(app.queued_messages.is_empty(), "local overnight should not use remote queue");
+        let last_message = app.session.messages.last().expect("overnight prompt message");
+        assert!(last_message.content.iter().any(|block| matches!(
+            block,
+            crate::message::ContentBlock::Text { text, .. }
+                if text.contains("visible Overnight Coordinator")
+        )));
+    });
+}
+
+#[test]
+fn test_overnight_start_queues_remote_turn_without_stuck_sending() {
+    with_temp_jcode_home(|| {
+        let mut app = create_test_app();
+        app.is_remote = true;
+        assert!(super::commands::handle_session_command(
+            &mut app,
+            "/overnight 1m hi"
+        ));
+
+        assert!(!app.pending_turn, "remote overnight should not set local pending_turn");
+        assert!(!app.is_processing, "remote overnight should not get stuck in local Sending");
+        assert_eq!(app.queued_messages.len(), 1);
+        assert!(app.queued_messages[0].contains("visible Overnight Coordinator"));
+    });
 }

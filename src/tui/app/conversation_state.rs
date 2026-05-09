@@ -46,6 +46,29 @@ impl App {
         )
     }
 
+    pub(super) fn format_compaction_progress_notice(elapsed: std::time::Duration) -> String {
+        const BAR_WIDTH: usize = 12;
+        const PULSE_WIDTH: usize = 4;
+        let max_start = BAR_WIDTH.saturating_sub(PULSE_WIDTH);
+        let frame = (elapsed.as_millis() / 180) as usize;
+        let period = (max_start * 2).max(1);
+        let phase = frame % period;
+        let start = if phase <= max_start {
+            phase
+        } else {
+            period - phase
+        };
+        let mut bar = String::with_capacity(BAR_WIDTH);
+        for idx in 0..BAR_WIDTH {
+            if (start..start + PULSE_WIDTH).contains(&idx) {
+                bar.push('█');
+            } else {
+                bar.push('░');
+            }
+        }
+        format!("Compacting context [{}] {:.0}s", bar, elapsed.as_secs_f32())
+    }
+
     pub(super) fn format_compaction_complete_message(
         event: &crate::compaction::CompactionEvent,
         context_limit: u64,
@@ -214,7 +237,9 @@ impl App {
     }
 
     pub(super) fn reseed_compaction_from_provider_messages(&mut self) {
-        if self.is_remote || !self.provider.uses_jcode_compaction() {
+        if self.is_remote
+            || (!self.provider.uses_jcode_compaction() && self.session.compaction.is_none())
+        {
             return;
         }
         let provider_messages = self.materialized_provider_messages();
@@ -226,6 +251,9 @@ impl App {
                 manager.restore_persisted_state_with(state, &provider_messages);
             } else {
                 manager.seed_restored_messages_with(&provider_messages);
+            }
+            if manager.discard_oversized_openai_native_compaction() {
+                self.sync_session_compaction_state_from_manager(&manager);
             }
         };
     }
@@ -251,9 +279,27 @@ impl App {
         encrypted_content: String,
         compacted_count: usize,
     ) -> anyhow::Result<()> {
+        let encrypted_content_len = encrypted_content.len();
+        let (summary_text, openai_encrypted_content) =
+            if crate::provider::openai_request::openai_encrypted_content_is_sendable(
+                &encrypted_content,
+            ) {
+                (String::new(), Some(encrypted_content))
+            } else {
+                crate::logging::warn(&format!(
+                    "Discarding oversized OpenAI native compaction payload before TUI persist ({} chars)",
+                    encrypted_content_len,
+                ));
+                (
+                    crate::provider::openai_request::openai_encrypted_content_fallback_summary(
+                        encrypted_content_len,
+                    ),
+                    None,
+                )
+            };
         let state = crate::session::StoredCompactionState {
-            summary_text: String::new(),
-            openai_encrypted_content: Some(encrypted_content),
+            summary_text,
+            openai_encrypted_content,
             covers_up_to_turn: compacted_count,
             original_turn_count: compacted_count,
             compacted_count,
@@ -287,6 +333,8 @@ impl App {
         let compaction = self.registry.compaction();
         match compaction.try_write() {
             Ok(mut manager) => {
+                let discarded_oversized_native =
+                    manager.discard_oversized_openai_native_compaction();
                 if self.provider.uses_jcode_compaction() {
                     let action = manager.ensure_context_fits(&base_messages, self.provider.clone());
                     match action {
@@ -306,7 +354,7 @@ impl App {
                 } else {
                     None
                 };
-                if event.is_some() {
+                if event.is_some() || discarded_oversized_native {
                     self.sync_session_compaction_state_from_manager(&manager);
                 }
                 (messages, event)
@@ -671,6 +719,7 @@ impl App {
         let mut new_session =
             Session::create_with_id(new_session_id, Some(old_session.id.clone()), None);
         new_session.title = old_session.title.clone();
+        new_session.custom_title = old_session.custom_title.clone();
         new_session.provider_session_id = old_session.provider_session_id.clone();
         new_session.model = old_session.model.clone();
         new_session.is_canary = old_session.is_canary;

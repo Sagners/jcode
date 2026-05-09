@@ -15,8 +15,10 @@ use super::{
 };
 use crate::agent::Agent;
 use crate::plan::{
-    PlanItem, cycle_item_ids, is_terminal_status, missing_dependencies, next_runnable_item_ids,
-    unresolved_dependencies,
+    TaskControlAction, assignment_affinities_for_task, assignment_loads,
+    build_control_assignment_text, combine_assignment_text, explicit_task_blocked_reason,
+    next_unassigned_runnable_item_id, task_control_action_allows_status, task_control_status_error,
+    task_control_target_item_id,
 };
 use crate::protocol::{NotificationType, PlanGraphStatus, ServerEvent};
 use jcode_agent_runtime::SoftInterruptSource;
@@ -25,19 +27,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-
-fn compute_assignment_loads(plan: &VersionedPlan) -> HashMap<String, usize> {
-    let mut loads = HashMap::new();
-    for item in &plan.items {
-        if is_terminal_status(&item.status) {
-            continue;
-        }
-        if let Some(assignee) = item.assigned_to.as_ref() {
-            *loads.entry(assignee.clone()).or_default() += 1;
-        }
-    }
-    loads
-}
 
 fn filter_swarm_agent_candidates<'a>(
     members: &'a HashMap<String, SwarmMember>,
@@ -55,89 +44,12 @@ fn filter_swarm_agent_candidates<'a>(
         .collect()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TaskControlAction {
-    Start,
-    Wake,
-    Resume,
-    Retry,
-    Reassign,
-    Replace,
-    Salvage,
-}
-
-impl TaskControlAction {
-    fn parse(action: &str) -> Option<Self> {
-        match action {
-            "start" => Some(Self::Start),
-            "wake" => Some(Self::Wake),
-            "resume" => Some(Self::Resume),
-            "retry" => Some(Self::Retry),
-            "reassign" => Some(Self::Reassign),
-            "replace" => Some(Self::Replace),
-            "salvage" => Some(Self::Salvage),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Start => "start",
-            Self::Wake => "wake",
-            Self::Resume => "resume",
-            Self::Retry => "retry",
-            Self::Reassign => "reassign",
-            Self::Replace => "replace",
-            Self::Salvage => "salvage",
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct TaskSnapshot {
     content: String,
     status: String,
     assigned_to: Option<String>,
     progress: Option<SwarmTaskProgress>,
-}
-
-fn combine_assignment_text(content: &str, message: Option<&str>) -> String {
-    if let Some(extra) = message {
-        format!(
-            "{}\n\nAdditional coordinator instructions:\n{}",
-            content, extra
-        )
-    } else {
-        content.to_string()
-    }
-}
-
-fn restart_instruction_prefix(action: TaskControlAction) -> Option<&'static str> {
-    match action {
-        TaskControlAction::Resume => Some(
-            "Resume your assigned task from the current session context and continue the work.",
-        ),
-        TaskControlAction::Retry => {
-            Some("Retry your assigned task. Fix any earlier issues and continue toward completion.")
-        }
-        _ => None,
-    }
-}
-
-fn build_control_assignment_text(
-    action: TaskControlAction,
-    content: &str,
-    message: Option<&str>,
-) -> String {
-    let mut parts = Vec::new();
-    if let Some(prefix) = restart_instruction_prefix(action) {
-        parts.push(prefix.to_string());
-    }
-    parts.push(content.to_string());
-    if let Some(extra) = message {
-        parts.push(format!("Additional coordinator instructions:\n{}", extra));
-    }
-    parts.join("\n\n")
 }
 
 async fn task_snapshot_for(
@@ -163,34 +75,9 @@ async fn plan_graph_status_for(
     let plans = swarm_plans.read().await;
     let plan = plans.get(swarm_id);
     if let Some(plan) = plan {
-        let graph = crate::plan::summarize_plan_graph(&plan.items);
-        PlanGraphStatus {
-            swarm_id: Some(swarm_id.to_string()),
-            version: plan.version,
-            item_count: plan.items.len(),
-            ready_ids: graph.ready_ids,
-            blocked_ids: graph.blocked_ids,
-            active_ids: graph.active_ids,
-            completed_ids: graph.completed_ids,
-            cycle_ids: graph.cycle_ids,
-            unresolved_dependency_ids: graph.unresolved_dependency_ids,
-            next_ready_ids: next_runnable_item_ids(&plan.items, Some(8)),
-            newly_ready_ids: Vec::new(),
-        }
+        PlanGraphStatus::from_versioned_plan(swarm_id, plan, Some(8), Vec::new())
     } else {
-        PlanGraphStatus {
-            swarm_id: Some(swarm_id.to_string()),
-            version: 0,
-            item_count: 0,
-            ready_ids: Vec::new(),
-            blocked_ids: Vec::new(),
-            active_ids: Vec::new(),
-            completed_ids: Vec::new(),
-            cycle_ids: Vec::new(),
-            unresolved_dependency_ids: Vec::new(),
-            next_ready_ids: Vec::new(),
-            newly_ready_ids: Vec::new(),
-        }
+        PlanGraphStatus::empty_for_swarm(swarm_id)
     }
 }
 
@@ -268,19 +155,22 @@ async fn resolve_assignment_target_session(
         return Ok(target.to_string());
     }
 
-    let assignment_loads = {
+    let assignment_counts = {
         let plans = swarm_plans.read().await;
         plans
             .get(swarm_id)
-            .map(compute_assignment_loads)
+            .map(assignment_loads)
             .unwrap_or_default()
     };
 
     let mut candidates = filter_swarm_agent_candidates(&members, req_session_id, swarm_id);
 
     candidates.sort_by(|left, right| {
-        let left_load = assignment_loads.get(&left.session_id).copied().unwrap_or(0);
-        let right_load = assignment_loads
+        let left_load = assignment_counts
+            .get(&left.session_id)
+            .copied()
+            .unwrap_or(0);
+        let right_load = assignment_counts
             .get(&right.session_id)
             .copied()
             .unwrap_or(0);
@@ -311,41 +201,7 @@ async fn task_id_for_target_session(
     let Some(plan) = plans.get(swarm_id) else {
         return Err("No swarm plan exists for this swarm.".to_string());
     };
-
-    let mut candidates: Vec<&PlanItem> = plan
-        .items
-        .iter()
-        .filter(|item| item.assigned_to.as_deref() == Some(target_session))
-        .filter(|item| action_allows_status(action, &item.status))
-        .collect();
-
-    candidates.sort_by_key(|item| match item.status.as_str() {
-        "running" | "running_stale" => 0,
-        "queued" | "ready" | "pending" | "todo" => 1,
-        "failed" | "stopped" | "crashed" => 2,
-        "completed" | "done" => 3,
-        _ => 4,
-    });
-
-    match candidates.as_slice() {
-        [] => Err(format!(
-            "No task assigned to '{}' can be {}. Provide task_id explicitly, or assign a task first.",
-            target_session,
-            action.as_str()
-        )),
-        [item] => Ok(item.id.clone()),
-        [first, second, ..] if first.status != second.status => Ok(first.id.clone()),
-        _ => Err(format!(
-            "Multiple tasks assigned to '{}' can be {}: {}. Provide task_id explicitly.",
-            target_session,
-            action.as_str(),
-            candidates
-                .iter()
-                .map(|item| item.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
-    }
+    task_control_target_item_id(&plan.items, target_session, action)
 }
 
 async fn next_unassigned_runnable_task_id(
@@ -354,14 +210,7 @@ async fn next_unassigned_runnable_task_id(
 ) -> Option<String> {
     let plans = swarm_plans.read().await;
     let plan = plans.get(swarm_id)?;
-    let next_ids = next_runnable_item_ids(&plan.items, None);
-    next_ids.into_iter().find(|candidate_id| {
-        plan.items
-            .iter()
-            .find(|item| item.id == *candidate_id)
-            .map(|item| item.assigned_to.is_none())
-            .unwrap_or(false)
-    })
+    next_unassigned_runnable_item_id(plan)
 }
 
 async fn resolve_assignment_target_for_task(
@@ -383,83 +232,41 @@ async fn resolve_assignment_target_for_task(
         .await;
     }
 
-    let (assignment_loads, dependency_carryover, metadata_carryover) = {
+    let affinities = {
         let plans = swarm_plans.read().await;
         let Some(plan) = plans.get(swarm_id) else {
             return Err("No runnable unassigned tasks are available in the swarm plan".to_string());
         };
-        let loads = compute_assignment_loads(plan);
-
-        let Some(task) = plan.items.iter().find(|item| item.id == task_id) else {
-            return Err(format!("Task '{}' not found in swarm plan", task_id));
-        };
-        let mut carryover = HashMap::<String, usize>::new();
-        let mut metadata = HashMap::<String, usize>::new();
-        for dependency_id in &task.blocked_by {
-            if let Some(dep_item) = plan.items.iter().find(|item| item.id == *dependency_id)
-                && let Some(owner) = dep_item.assigned_to.as_ref()
-            {
-                *carryover.entry(owner.clone()).or_default() += 1;
-            }
-            if let Some(progress) = plan.task_progress.get(dependency_id)
-                && let Some(owner) = progress.assigned_session_id.as_ref()
-            {
-                *carryover.entry(owner.clone()).or_default() += 1;
-            }
-        }
-
-        for item in &plan.items {
-            let Some(owner) = item.assigned_to.as_ref() else {
-                continue;
-            };
-            if item.id == task.id {
-                continue;
-            }
-            if task
-                .subsystem
-                .as_ref()
-                .zip(item.subsystem.as_ref())
-                .is_some_and(|(left, right)| left == right)
-            {
-                *metadata.entry(owner.clone()).or_default() += 2;
-            }
-            if !task.file_scope.is_empty() && !item.file_scope.is_empty() {
-                let overlap = task
-                    .file_scope
-                    .iter()
-                    .filter(|path| item.file_scope.contains(*path))
-                    .count();
-                if overlap > 0 {
-                    *metadata.entry(owner.clone()).or_default() += overlap;
-                }
-            }
-        }
-
-        (loads, carryover, metadata)
+        assignment_affinities_for_task(plan, task_id)?
     };
 
     let members = swarm_members.read().await;
     let mut candidates = filter_swarm_agent_candidates(&members, req_session_id, swarm_id);
 
     candidates.sort_by(|left, right| {
-        let left_carry = dependency_carryover
+        let left_carry = affinities
+            .dependency_carryover
             .get(&left.session_id)
             .copied()
             .unwrap_or(0);
-        let right_carry = dependency_carryover
+        let right_carry = affinities
+            .dependency_carryover
             .get(&right.session_id)
             .copied()
             .unwrap_or(0);
-        let left_meta = metadata_carryover
+        let left_meta = affinities
+            .metadata_carryover
             .get(&left.session_id)
             .copied()
             .unwrap_or(0);
-        let right_meta = metadata_carryover
+        let right_meta = affinities
+            .metadata_carryover
             .get(&right.session_id)
             .copied()
             .unwrap_or(0);
-        let left_load = assignment_loads.get(&left.session_id).copied().unwrap_or(0);
-        let right_load = assignment_loads
+        let left_load = affinities.loads.get(&left.session_id).copied().unwrap_or(0);
+        let right_load = affinities
+            .loads
             .get(&right.session_id)
             .copied()
             .unwrap_or(0);
@@ -738,50 +545,6 @@ fn spawn_assigned_task_run(
             }
         }
     });
-}
-
-fn action_allows_status(action: TaskControlAction, status: &str) -> bool {
-    match action {
-        TaskControlAction::Start | TaskControlAction::Wake => status == "queued",
-        TaskControlAction::Resume => matches!(status, "queued" | "running" | "running_stale"),
-        TaskControlAction::Retry => matches!(status, "failed" | "running_stale"),
-        TaskControlAction::Reassign | TaskControlAction::Replace | TaskControlAction::Salvage => {
-            !matches!(status, "done")
-        }
-    }
-}
-
-fn action_status_error(action: TaskControlAction, status: &str, task_id: &str) -> String {
-    match action {
-        TaskControlAction::Start => format!(
-            "Task '{}' is '{}' and cannot be started. Use start only for queued assignments.",
-            task_id, status
-        ),
-        TaskControlAction::Wake => format!(
-            "Task '{}' is '{}' and cannot be woken. Use wake only for queued assignments.",
-            task_id, status
-        ),
-        TaskControlAction::Resume => format!(
-            "Task '{}' is '{}' and cannot be resumed safely.",
-            task_id, status
-        ),
-        TaskControlAction::Retry => format!(
-            "Task '{}' is '{}' and cannot be retried. Retry is only for failed or stale work.",
-            task_id, status
-        ),
-        TaskControlAction::Reassign => format!(
-            "Task '{}' is already complete. Reassign unfinished work instead.",
-            task_id
-        ),
-        TaskControlAction::Replace => format!(
-            "Task '{}' is already complete. Replace is only for unfinished work.",
-            task_id
-        ),
-        TaskControlAction::Salvage => format!(
-            "Task '{}' is already complete. Salvage is only for unfinished or failed work.",
-            task_id
-        ),
-    }
 }
 
 fn format_salvage_message(
@@ -1158,100 +921,57 @@ pub(super) async fn handle_comm_assign_task(
         }
     };
 
-    let (selected_task_id, task_content, participant_ids, plan_item_count, blocked_reason) =
-        {
-            let now_ms = now_unix_ms();
-            let mut plans = swarm_plans.write().await;
-            let plan = plans
-                .entry(swarm_id.clone())
-                .or_insert_with(VersionedPlan::new);
-            let known_ids: HashSet<&str> = plan.items.iter().map(|item| item.id.as_str()).collect();
-            let completed_ids: HashSet<&str> = plan
-                .items
-                .iter()
-                .filter(|item| matches!(item.status.as_str(), "completed" | "done"))
-                .map(|item| item.id.as_str())
-                .collect();
-            let cycle_ids: HashSet<String> = cycle_item_ids(&plan.items).into_iter().collect();
-            let selected_task_id = requested_task_id.clone().or_else(|| {
-                let next_ids = next_runnable_item_ids(&plan.items, None);
-                next_ids.into_iter().find(|candidate_id| {
-                    plan.items
-                        .iter()
-                        .find(|item| item.id == *candidate_id)
-                        .map(|item| item.assigned_to.is_none())
-                        .unwrap_or(false)
-                })
-            });
-            let blocked_reason =
-                selected_task_id.as_ref().and_then(|selected_task_id| {
-                    requested_task_id.as_ref().and_then(|_| {
-                plan.items.iter().find(|item| item.id == *selected_task_id).and_then(|item| {
-                    let missing = missing_dependencies(item, &known_ids);
-                    if !missing.is_empty() {
-                        return Some(format!(
-                            "Task '{}' has missing dependencies: {}",
-                            item.id,
-                            missing.join(", ")
-                        ));
-                    }
-                    let unresolved = unresolved_dependencies(item, &known_ids, &completed_ids);
-                    if !unresolved.is_empty() {
-                        return Some(format!(
-                            "Task '{}' is still blocked by: {}",
-                            item.id,
-                            unresolved.join(", ")
-                        ));
-                    }
-                    if cycle_ids.contains(&item.id) {
-                        return Some(format!(
-                            "Task '{}' is part of a dependency cycle and is not runnable",
-                            item.id
-                        ));
-                    }
-                    None
-                })
+    let (selected_task_id, task_content, participant_ids, plan_item_count, blocked_reason) = {
+        let now_ms = now_unix_ms();
+        let mut plans = swarm_plans.write().await;
+        let plan = plans
+            .entry(swarm_id.clone())
+            .or_insert_with(VersionedPlan::new);
+        let selected_task_id = requested_task_id
+            .clone()
+            .or_else(|| next_unassigned_runnable_item_id(plan));
+        let blocked_reason = requested_task_id
+            .as_deref()
+            .and_then(|task_id| explicit_task_blocked_reason(plan, task_id));
+        let found = if blocked_reason.is_some() {
+            None
+        } else {
+            selected_task_id.as_ref().and_then(|selected_task_id| {
+                plan.items
+                    .iter_mut()
+                    .find(|item| item.id == *selected_task_id)
             })
-                });
-            let found = if blocked_reason.is_some() {
-                None
-            } else {
-                selected_task_id.as_ref().and_then(|selected_task_id| {
-                    plan.items
-                        .iter_mut()
-                        .find(|item| item.id == *selected_task_id)
-                })
-            };
-            if let Some(item) = found {
-                let content = item.content.clone();
-                item.assigned_to = Some(target_session.clone());
-                item.status = "queued".to_string();
-                plan.task_progress.insert(
-                    item.id.clone(),
-                    SwarmTaskProgress {
-                        assigned_session_id: Some(target_session.clone()),
-                        assignment_summary: Some(truncate_detail(
-                            &combine_assignment_text(&content, message.as_deref()),
-                            120,
-                        )),
-                        assigned_at_unix_ms: Some(now_ms),
-                        ..SwarmTaskProgress::default()
-                    },
-                );
-                plan.version += 1;
-                plan.participants.insert(req_session_id.clone());
-                plan.participants.insert(target_session.clone());
-                (
-                    Some(item.id.clone()),
-                    Some(content),
-                    plan.participants.clone(),
-                    plan.items.len(),
-                    None,
-                )
-            } else {
-                (None, None, HashSet::new(), 0, blocked_reason)
-            }
         };
+        if let Some(item) = found {
+            let content = item.content.clone();
+            item.assigned_to = Some(target_session.clone());
+            item.status = "queued".to_string();
+            plan.task_progress.insert(
+                item.id.clone(),
+                SwarmTaskProgress {
+                    assigned_session_id: Some(target_session.clone()),
+                    assignment_summary: Some(truncate_detail(
+                        &combine_assignment_text(&content, message.as_deref()),
+                        120,
+                    )),
+                    assigned_at_unix_ms: Some(now_ms),
+                    ..SwarmTaskProgress::default()
+                },
+            );
+            plan.version += 1;
+            plan.participants.insert(req_session_id.clone());
+            plan.participants.insert(target_session.clone());
+            (
+                Some(item.id.clone()),
+                Some(content),
+                plan.participants.clone(),
+                plan.items.len(),
+                None,
+            )
+        } else {
+            (None, None, HashSet::new(), 0, blocked_reason)
+        }
+    };
 
     let Some(selected_task_id) = selected_task_id else {
         let message = blocked_reason.unwrap_or_else(|| {
@@ -1684,10 +1404,10 @@ pub(super) async fn handle_comm_task_control(
         return;
     };
 
-    if !action_allows_status(action, &snapshot.status) {
+    if !task_control_action_allows_status(action, &snapshot.status) {
         let _ = client_event_tx.send(ServerEvent::Error {
             id,
-            message: action_status_error(action, &snapshot.status, &task_id),
+            message: task_control_status_error(action, &snapshot.status, &task_id),
             retry_after_secs: None,
         });
         return;

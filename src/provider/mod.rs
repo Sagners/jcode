@@ -2,9 +2,8 @@ mod accessors;
 mod account_failover;
 pub mod anthropic;
 pub mod antigravity;
-mod catalog_refresh;
+pub mod bedrock;
 pub mod claude;
-pub mod cli_common;
 pub mod copilot;
 pub mod cursor;
 mod dispatch;
@@ -23,7 +22,7 @@ mod selection;
 mod startup;
 
 use crate::auth;
-use crate::message::{ContentBlock, Message, Role, StreamEvent, ToolDefinition};
+use crate::message::{Message, ToolDefinition};
 use account_failover::{
     account_usage_probe, active_account_label_for_provider, maybe_annotate_limit_summary,
     same_provider_account_candidates, same_provider_account_failover_enabled,
@@ -32,24 +31,22 @@ use account_failover::{
 use anyhow::Result;
 use async_trait::async_trait;
 #[cfg(test)]
-use failover::FailoverDecision;
-use futures::Stream;
-use std::borrow::Cow;
-use std::pin::Pin;
+use jcode_provider_core::FailoverDecision;
 use std::sync::{Arc, RwLock};
 
-// Re-export native tool result types for use by agent
-pub use catalog_refresh::{ModelCatalogRefreshSummary, summarize_model_catalog_refresh};
-pub use claude::{NativeToolResult, NativeToolResultSender};
-pub(crate) use failover::{ProviderFailoverPrompt, parse_failover_prompt_message};
 pub use jcode_provider_core::{
-    CHEAPNESS_REFERENCE_INPUT_TOKENS, CHEAPNESS_REFERENCE_OUTPUT_TOKENS, ModelRoute,
-    NativeCompactionResult, RouteBillingKind, RouteCheapnessEstimate, RouteCostConfidence,
-    RouteCostSource, shared_http_client,
+    ALL_CLAUDE_MODELS, ALL_OPENAI_MODELS, CHEAPNESS_REFERENCE_INPUT_TOKENS,
+    CHEAPNESS_REFERENCE_OUTPUT_TOKENS, DEFAULT_CONTEXT_LIMIT, EventStream, ModelCapabilities,
+    ModelCatalogRefreshSummary, ModelRoute, NativeCompactionResult, NativeToolResult,
+    NativeToolResultSender, PremiumMode, Provider, RouteBillingKind, RouteCheapnessEstimate,
+    RouteCostConfidence, RouteCostSource, dedupe_model_routes, explicit_model_provider_prefix,
+    model_name_for_provider, normalize_copilot_model_name, provider_from_model_key,
+    shared_http_client, summarize_model_catalog_refresh,
 };
+pub(crate) use jcode_provider_core::{ProviderFailoverPrompt, parse_failover_prompt_message};
 pub use route_builders::{
-    build_anthropic_oauth_route, build_copilot_route, build_openai_oauth_route,
-    build_openrouter_auto_route, build_openrouter_endpoint_route,
+    build_anthropic_oauth_route, build_copilot_route, build_openai_api_key_route,
+    build_openai_oauth_route, build_openrouter_auto_route, build_openrouter_endpoint_route,
     build_openrouter_fallback_provider_route, is_listable_model_name,
     listable_model_names_from_routes, openrouter_catalog_model_id,
 };
@@ -57,302 +54,6 @@ pub(crate) use routing::{
     anthropic_api_key_route_availability, anthropic_oauth_route_availability,
     is_transient_transport_error, should_eager_detect_copilot_tier,
 };
-
-/// Stream of events from a provider
-pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
-
-/// Provider trait for LLM backends
-#[async_trait]
-pub trait Provider: Send + Sync {
-    /// Send messages and get a streaming response
-    /// resume_session_id: Optional session ID to resume a previous conversation (provider-specific)
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDefinition],
-        system: &str,
-        resume_session_id: Option<&str>,
-    ) -> Result<EventStream>;
-
-    /// Send messages with split system prompt for better caching
-    /// system_static: Static content (instruction files, base prompt) - cached
-    /// system_dynamic: Dynamic content (date, git status, memory) - not cached
-    /// Default implementation keeps static instructions in the provider's system field and moves
-    /// dynamic context into a late synthetic system-reminder message after the latest user prompt.
-    /// This avoids putting changing date/time/git/memory text before cacheable conversation text for
-    /// providers with implicit prefix caching (OpenAI/Gemini/OpenRouter-compatible), while Anthropic
-    /// overrides this with native split system cache-control blocks.
-    async fn complete_split(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDefinition],
-        system_static: &str,
-        system_dynamic: &str,
-        resume_session_id: Option<&str>,
-    ) -> Result<EventStream> {
-        let dynamic_messages = messages_with_dynamic_system_context(messages, system_dynamic);
-        self.complete(&dynamic_messages, tools, system_static, resume_session_id)
-            .await
-    }
-
-    /// Get the provider name
-    fn name(&self) -> &str;
-
-    /// Get the model identifier being used
-    fn model(&self) -> String {
-        "unknown".to_string()
-    }
-
-    /// Set the model to use (returns error if model not supported)
-    fn set_model(&self, _model: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "This provider does not support model switching"
-        ))
-    }
-
-    /// List available models for this provider
-    fn available_models(&self) -> Vec<&'static str> {
-        vec![]
-    }
-
-    /// List available models for display/autocomplete (may be dynamic).
-    fn available_models_display(&self) -> Vec<String> {
-        self.available_models()
-            .iter()
-            .map(|m| (*m).to_string())
-            .filter(|model| is_listable_model_name(model))
-            .collect()
-    }
-
-    /// List models that should participate in cycle-model switching.
-    ///
-    /// Defaults to the provider's static switchable set. Providers with dynamic
-    /// model catalogs can override this to expose a cached live list without
-    /// forcing every caller to know whether the source is static or dynamic.
-    fn available_models_for_switching(&self) -> Vec<String> {
-        self.available_models()
-            .iter()
-            .map(|m| (*m).to_string())
-            .collect()
-    }
-
-    /// List known providers for a model (OpenRouter-style @provider autocomplete).
-    fn available_providers_for_model(&self, _model: &str) -> Vec<String> {
-        Vec::new()
-    }
-
-    /// Provider details for model picker: Vec<(provider_name, detail_string)>.
-    /// Uses cached endpoint data when available (sync, no network).
-    fn provider_details_for_model(&self, _model: &str) -> Vec<(String, String)> {
-        Vec::new()
-    }
-
-    /// Return the currently preferred upstream provider (e.g., for OpenRouter routing display).
-    fn preferred_provider(&self) -> Option<String> {
-        None
-    }
-
-    /// Get all model routes for the unified picker.
-    /// Returns every (model, provider, api_method, available, detail) combination.
-    fn model_routes(&self) -> Vec<ModelRoute> {
-        Vec::new()
-    }
-
-    /// Prefetch any dynamic model lists (default: no-op).
-    async fn prefetch_models(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Force-refresh model catalog data and return a before/after summary.
-    async fn refresh_model_catalog(&self) -> Result<ModelCatalogRefreshSummary> {
-        let before_models = self.available_models_display();
-        let before_routes = self.model_routes();
-        self.prefetch_models().await?;
-        let after_models = self.available_models_display();
-        let after_routes = self.model_routes();
-        Ok(summarize_model_catalog_refresh(
-            before_models,
-            after_models,
-            before_routes,
-            after_routes,
-        ))
-    }
-
-    /// Called when auth credentials change (e.g., after login).
-    /// Providers can use this to hot-add sub-providers.
-    fn on_auth_changed(&self) {}
-
-    /// Get the reasoning effort level (if applicable, e.g., OpenAI)
-    fn reasoning_effort(&self) -> Option<String> {
-        None
-    }
-
-    /// Set the reasoning effort level (if applicable, e.g., OpenAI)
-    fn set_reasoning_effort(&self, _effort: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "This provider does not support reasoning effort"
-        ))
-    }
-
-    /// Get ordered list of available reasoning effort levels
-    fn available_efforts(&self) -> Vec<&'static str> {
-        vec![]
-    }
-
-    /// Get the active service tier override (if applicable, e.g., OpenAI).
-    fn service_tier(&self) -> Option<String> {
-        None
-    }
-
-    /// Set the active service tier override (if applicable, e.g., OpenAI).
-    fn set_service_tier(&self, _service_tier: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "This provider does not support service tier switching"
-        ))
-    }
-
-    /// Get ordered list of available service tiers.
-    fn available_service_tiers(&self) -> Vec<&'static str> {
-        vec![]
-    }
-
-    /// Get the native compaction mode for the active provider, if any.
-    fn native_compaction_mode(&self) -> Option<String> {
-        None
-    }
-
-    /// Get the native compaction threshold in tokens for the active provider, if any.
-    fn native_compaction_threshold_tokens(&self) -> Option<usize> {
-        None
-    }
-
-    fn transport(&self) -> Option<String> {
-        None
-    }
-
-    fn set_transport(&self, _transport: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "This provider does not support transport switching"
-        ))
-    }
-
-    fn available_transports(&self) -> Vec<&'static str> {
-        vec![]
-    }
-
-    /// Returns true if the provider executes tools internally (e.g., Claude Code CLI).
-    /// When true, jcode should NOT execute tools locally - just record the tool calls.
-    fn handles_tools_internally(&self) -> bool {
-        false
-    }
-
-    /// Invalidate any cached credentials (e.g., after account switch).
-    /// Providers that cache OAuth tokens should clear them.
-    async fn invalidate_credentials(&self) {
-        // Default: no-op
-    }
-
-    /// Set Copilot premium request conservation mode.
-    fn set_premium_mode(&self, _mode: copilot::PremiumMode) {
-        // Default: no-op (non-Copilot providers ignore this)
-    }
-
-    /// Get the current Copilot premium mode.
-    fn premium_mode(&self) -> copilot::PremiumMode {
-        copilot::PremiumMode::Normal
-    }
-
-    /// Returns true if jcode should use its own compaction for this provider.
-    fn supports_compaction(&self) -> bool {
-        false
-    }
-
-    /// Returns true if jcode should proactively run its own summary-based
-    /// compaction for this provider during normal operation.
-    ///
-    /// Providers can override this to prefer a native/server-side compaction
-    /// mechanism while still keeping local hard-compaction available as an
-    /// emergency recovery path.
-    fn uses_jcode_compaction(&self) -> bool {
-        self.supports_compaction()
-    }
-
-    /// Ask the provider to produce a native compaction artifact for the supplied
-    /// messages. Providers that do not support native compaction should return
-    /// an error so callers can fall back to jcode's local summary compaction.
-    async fn native_compact(
-        &self,
-        _messages: &[Message],
-        _existing_summary_text: Option<&str>,
-        _existing_openai_encrypted_content: Option<&str>,
-    ) -> Result<NativeCompactionResult> {
-        Err(anyhow::anyhow!(
-            "This provider does not support native compaction"
-        ))
-    }
-
-    /// Return the context window size (in tokens) for the current model.
-    /// Providers should override this to return accurate, dynamic values.
-    /// Falls back to hardcoded lookup if not overridden.
-    fn context_window(&self) -> usize {
-        context_limit_for_model_with_provider(&self.model(), Some(self.name()))
-            .unwrap_or(DEFAULT_CONTEXT_LIMIT)
-    }
-
-    /// Create a new provider instance with the same credentials/config and model,
-    /// but independent mutable state (e.g., model selection).
-    fn fork(&self) -> Arc<dyn Provider>;
-
-    /// Get a sender for native tool results (if the provider supports it).
-    /// This is used by the Claude provider to send results back to a bridge (if any).
-    fn native_result_sender(&self) -> Option<NativeToolResultSender> {
-        None
-    }
-
-    /// Drain any startup notices (e.g., account auto-switch messages).
-    /// Returns an empty vec by default. MultiProvider overrides this.
-    fn drain_startup_notices(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    /// Switch the active provider for the current session when supported.
-    fn switch_active_provider_to(&self, _provider: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "This provider does not support active provider switching"
-        ))
-    }
-
-    /// Simple completion that returns text directly (no streaming).
-    /// Useful for internal tasks like compaction summaries.
-    /// Default implementation uses complete() and collects the response.
-    async fn complete_simple(&self, prompt: &str, system: &str) -> Result<String> {
-        use futures::StreamExt;
-
-        let messages = vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text {
-                text: prompt.to_string(),
-                cache_control: None,
-            }],
-            timestamp: None,
-            tool_duration_ms: None,
-        }];
-
-        let response = self.complete(&messages, &[], system, None).await?;
-        let mut result = String::new();
-        tokio::pin!(response);
-
-        while let Some(event) = response.next().await {
-            match event {
-                Ok(StreamEvent::TextDelta(text)) => result.push_str(&text),
-                Ok(_) => {}
-                Err(err) => return Err(err),
-            }
-        }
-
-        Ok(result)
-    }
-}
 
 pub fn set_model_with_auth_refresh(provider: &dyn Provider, model: &str) -> Result<()> {
     match provider.set_model(model) {
@@ -371,181 +72,10 @@ pub fn set_model_with_auth_refresh(provider: &dyn Provider, model: &str) -> Resu
     }
 }
 
-fn is_fresh_user_text_message(message: &Message) -> bool {
-    if message.role != Role::User {
-        return false;
-    }
-
-    let mut saw_user_text = false;
-    for block in &message.content {
-        match block {
-            ContentBlock::Text { text, .. } => {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with("<system-reminder>") {
-                    saw_user_text = true;
-                }
-            }
-            ContentBlock::Image { .. } => {}
-            _ => return false,
-        }
-    }
-
-    saw_user_text
-}
-
-fn dynamic_system_context_message(system_dynamic: &str) -> Option<Message> {
-    let trimmed = system_dynamic.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(Message::user(&format!(
-        "<system-reminder>\n{}\n</system-reminder>",
-        trimmed
-    )))
-}
-
-fn messages_with_dynamic_system_context(
-    messages: &[Message],
-    system_dynamic: &str,
-) -> Vec<Message> {
-    let Some(dynamic_message) = dynamic_system_context_message(system_dynamic) else {
-        return messages.to_vec();
-    };
-
-    let mut out = messages.to_vec();
-    let insert_at = out
-        .iter()
-        .rposition(is_fresh_user_text_message)
-        .map(|idx| idx + 1)
-        .unwrap_or(out.len());
-    out.insert(insert_at, dynamic_message);
-    out
-}
-
-#[cfg(test)]
-mod split_prompt_tests {
-    use super::*;
-
-    fn text_of(message: &Message) -> &str {
-        match message.content.first() {
-            Some(ContentBlock::Text { text, .. }) => text,
-            other => panic!("expected text block, got {:?}", other),
-        }
-    }
-
-    fn assert_role_text(message: &Message, role: Role, text: &str) {
-        assert_eq!(message.role, role);
-        assert_eq!(text_of(message), text);
-    }
-
-    #[test]
-    fn dynamic_context_is_inserted_after_current_user_prompt() {
-        let messages = vec![
-            Message::user("first user"),
-            Message::assistant_text("assistant"),
-            Message::user("current user"),
-        ];
-
-        let out =
-            messages_with_dynamic_system_context(&messages, "# Environment\nTime: 10:00:00 UTC");
-
-        assert_eq!(out.len(), 4);
-        assert_eq!(text_of(&out[0]), "first user");
-        assert_eq!(text_of(&out[1]), "assistant");
-        assert_eq!(text_of(&out[2]), "current user");
-        assert!(text_of(&out[3]).starts_with("<system-reminder>\n# Environment"));
-    }
-
-    #[test]
-    fn dynamic_context_does_not_move_existing_history_prefix() {
-        let messages = vec![
-            Message::user("stable cached user"),
-            Message::assistant_text("stable cached assistant"),
-            Message::user("latest prompt"),
-        ];
-
-        let out_a = messages_with_dynamic_system_context(&messages, "Time: 10:00:00 UTC");
-        let out_b = messages_with_dynamic_system_context(&messages, "Time: 10:00:01 UTC");
-
-        assert_role_text(&out_a[0], Role::User, "stable cached user");
-        assert_role_text(&out_a[1], Role::Assistant, "stable cached assistant");
-        assert_role_text(&out_b[0], Role::User, "stable cached user");
-        assert_role_text(&out_b[1], Role::Assistant, "stable cached assistant");
-        assert_role_text(&out_a[2], Role::User, "latest prompt");
-        assert_role_text(&out_b[2], Role::User, "latest prompt");
-        assert_ne!(text_of(&out_a[3]), text_of(&out_b[3]));
-    }
-
-    #[test]
-    fn empty_dynamic_context_leaves_messages_unchanged() {
-        let messages = vec![Message::user("hello")];
-        let out = messages_with_dynamic_system_context(&messages, "\n  \n");
-        assert_eq!(out.len(), 1);
-        assert_role_text(&out[0], Role::User, "hello");
-    }
-
-    #[test]
-    fn dynamic_context_appends_when_no_fresh_user_prompt_exists() {
-        let messages = vec![
-            Message::assistant_text("assistant"),
-            Message::user("<system-reminder>\ninternal\n</system-reminder>"),
-        ];
-
-        let out = messages_with_dynamic_system_context(&messages, "Time: 10:00:00 UTC");
-
-        assert_eq!(out.len(), 3);
-        assert_role_text(&out[0], Role::Assistant, "assistant");
-        assert_role_text(
-            &out[1],
-            Role::User,
-            "<system-reminder>\ninternal\n</system-reminder>",
-        );
-        assert!(text_of(&out[2]).contains("Time: 10:00:00 UTC"));
-    }
-}
-
-/// Available models (shown in /model list)
-pub const ALL_CLAUDE_MODELS: &[&str] = &[
-    "claude-opus-4-6",
-    "claude-opus-4-6[1m]",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-6[1m]",
-    "claude-haiku-4-5",
-    "claude-opus-4-5",
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-20250514",
-];
-
-pub const ALL_OPENAI_MODELS: &[&str] = &[
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-pro",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-    "gpt-5.2-chat-latest",
-    "gpt-5.2-codex",
-    "gpt-5.2-pro",
-    "gpt-5.1-codex-mini",
-    "gpt-5.1-codex-max",
-    "gpt-5.2",
-    "gpt-5.1-chat-latest",
-    "gpt-5.1",
-    "gpt-5.1-codex",
-    "gpt-5-chat-latest",
-    "gpt-5-codex",
-    "gpt-5-codex-mini",
-    "gpt-5-pro",
-    "gpt-5-mini",
-    "gpt-5-nano",
-    "gpt-5",
-];
-
 use self::dispatch::CompletionMode;
-use self::models::normalize_copilot_model_name;
 pub use self::models::{
     AccountModelAvailability, AccountModelAvailabilityState, AnthropicModelCatalog,
-    DEFAULT_CONTEXT_LIMIT, ModelCapabilities, OpenAIModelCatalog,
-    begin_anthropic_model_catalog_refresh, begin_openai_model_catalog_refresh,
+    OpenAIModelCatalog, begin_anthropic_model_catalog_refresh, begin_openai_model_catalog_refresh,
     cached_anthropic_model_ids, cached_openai_model_ids,
     clear_all_model_unavailability_for_account, clear_all_provider_unavailability_for_account,
     clear_model_unavailable_for_account, clear_provider_unavailable_for_account,
@@ -575,13 +105,15 @@ pub struct MultiProvider {
     openai: RwLock<Option<Arc<openai::OpenAIProvider>>>,
     /// GitHub Copilot API provider (direct API, hot-swappable after login)
     copilot_api: RwLock<Option<Arc<copilot::CopilotApiProvider>>>,
-    /// Antigravity provider (CLI-backed, hot-swappable after login)
-    antigravity: RwLock<Option<Arc<antigravity::AntigravityCliProvider>>>,
+    /// Antigravity provider (direct HTTPS, hot-swappable after login)
+    antigravity: RwLock<Option<Arc<antigravity::AntigravityProvider>>>,
     /// Gemini provider (hot-swappable after login)
     gemini: RwLock<Option<Arc<gemini::GeminiProvider>>>,
     /// Cursor provider (native/direct API, hot-swappable after login)
     cursor: RwLock<Option<Arc<cursor::CursorCliProvider>>>,
-    /// OpenRouter API provider (200+ models from various providers, hot-swappable after login)
+    /// AWS Bedrock provider (native Converse/ConverseStream, IAM/SigV4)
+    bedrock: RwLock<Option<Arc<bedrock::BedrockProvider>>>,
+    /// OpenRouter API provider
     openrouter: RwLock<Option<Arc<openrouter::OpenRouterProvider>>>,
     active: RwLock<ActiveProvider>,
     /// Use Claude CLI instead of direct API (legacy mode)
@@ -774,19 +306,6 @@ impl MultiProvider {
         Err(self.no_provider_available_error(&notes))
     }
 
-    fn provider_from_model_key(key: &str) -> Option<ActiveProvider> {
-        match key {
-            "claude" => Some(ActiveProvider::Claude),
-            "openai" => Some(ActiveProvider::OpenAI),
-            "copilot" => Some(ActiveProvider::Copilot),
-            "antigravity" => Some(ActiveProvider::Antigravity),
-            "gemini" => Some(ActiveProvider::Gemini),
-            "cursor" => Some(ActiveProvider::Cursor),
-            "openrouter" => Some(ActiveProvider::OpenRouter),
-            _ => None,
-        }
-    }
-
     fn openai_compatible_model_prefix(
         model: &str,
     ) -> Option<(crate::provider_catalog::OpenAiCompatibleProfile, &str)> {
@@ -798,18 +317,6 @@ impl MultiProvider {
 
         let profile = crate::provider_catalog::openai_compatible_profile_by_id(prefix)?;
         Some((profile, rest))
-    }
-
-    fn explicit_model_provider_prefix(model: &str) -> Option<(ActiveProvider, &'static str, &str)> {
-        if let Some(rest) = model.strip_prefix("copilot:") {
-            Some((ActiveProvider::Copilot, "copilot:", rest))
-        } else if let Some(rest) = model.strip_prefix("antigravity:") {
-            Some((ActiveProvider::Antigravity, "antigravity:", rest))
-        } else if let Some(rest) = model.strip_prefix("cursor:") {
-            Some((ActiveProvider::Cursor, "cursor:", rest))
-        } else {
-            None
-        }
     }
 
     fn ensure_provider_lock_allows_model_target(
@@ -849,15 +356,6 @@ impl MultiProvider {
         );
     }
 
-    fn model_name_for_provider<'a>(provider: ActiveProvider, model: &'a str) -> Cow<'a, str> {
-        if matches!(provider, ActiveProvider::Claude)
-            && let Some(canonical) = normalize_copilot_model_name(model)
-        {
-            return Cow::Borrowed(canonical);
-        }
-        Cow::Borrowed(model)
-    }
-
     fn set_model_on_provider(&self, provider: ActiveProvider, model: &str) -> Result<()> {
         let model = model.trim();
         if model.is_empty() {
@@ -868,7 +366,7 @@ impl MultiProvider {
 
         match provider {
             ActiveProvider::Claude => {
-                let model = Self::model_name_for_provider(provider, model);
+                let model = model_name_for_provider(provider, model);
                 if let Some(anthropic) = self.anthropic_provider() {
                     anthropic.set_model(&model)?;
                 } else if let Some(claude) = self.claude_provider() {
@@ -931,6 +429,16 @@ impl MultiProvider {
                 self.set_active_provider(ActiveProvider::Cursor);
                 Ok(())
             }
+            ActiveProvider::Bedrock => {
+                let Some(bedrock) = self.bedrock_provider() else {
+                    anyhow::bail!(
+                        "AWS Bedrock credentials not available. Configure AWS credentials and region first."
+                    );
+                };
+                bedrock.set_model(model)?;
+                self.set_active_provider(ActiveProvider::Bedrock);
+                Ok(())
+            }
             ActiveProvider::OpenRouter => {
                 let Some(openrouter) = self.openrouter_provider() else {
                     anyhow::bail!(
@@ -971,6 +479,40 @@ impl MultiProvider {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(provider);
         self.set_active_provider(ActiveProvider::OpenRouter);
         Ok(())
+    }
+
+    pub(super) fn set_config_default_model(
+        &self,
+        model: &str,
+        default_provider: Option<&str>,
+    ) -> Result<()> {
+        let model = model.trim();
+        if model.is_empty() {
+            anyhow::bail!("Model cannot be empty");
+        }
+
+        // A configured default_provider is a routing decision, not just a
+        // startup hint. Treat default_model as provider-local when the config
+        // names a concrete provider/profile so global model-name heuristics
+        // cannot undo that decision. This is especially important for
+        // OpenAI-compatible gateways whose model IDs often look like built-in
+        // OpenAI, Anthropic, or OpenRouter models.
+        if let Some(pref) = default_provider.and_then(|pref| {
+            let trimmed = pref.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        }) {
+            if crate::provider_catalog::resolve_openai_compatible_profile_selection(pref).is_some()
+                || crate::config::config().providers.contains_key(pref)
+            {
+                return self.set_model_on_provider(ActiveProvider::OpenRouter, model);
+            }
+
+            if let Some(provider) = Self::parse_provider_hint(pref) {
+                return self.set_model_on_provider(provider, model);
+            }
+        }
+
+        self.set_model(model)
     }
 }
 
@@ -1027,6 +569,7 @@ impl Provider for MultiProvider {
             ActiveProvider::Antigravity => "Antigravity",
             ActiveProvider::Gemini => "Gemini",
             ActiveProvider::Cursor => "Cursor",
+            ActiveProvider::Bedrock => "Bedrock",
             ActiveProvider::OpenRouter => "OpenRouter",
         }
     }
@@ -1063,10 +606,55 @@ impl Provider for MultiProvider {
                 .cursor_provider()
                 .map(|o| o.model())
                 .unwrap_or_else(|| "composer-1.5".to_string()),
+            ActiveProvider::Bedrock => self
+                .bedrock_provider()
+                .map(|o| o.model())
+                .unwrap_or_else(|| "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string()),
             ActiveProvider::OpenRouter => self
                 .openrouter_provider()
                 .map(|o| o.model())
                 .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string()),
+        }
+    }
+
+    fn supports_image_input(&self) -> bool {
+        match self.active_provider() {
+            ActiveProvider::Claude => self
+                .anthropic_provider()
+                .map(|provider| provider.supports_image_input())
+                .or_else(|| {
+                    self.claude_provider()
+                        .map(|provider| provider.supports_image_input())
+                })
+                .unwrap_or(false),
+            ActiveProvider::OpenAI => self
+                .openai_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
+            ActiveProvider::Copilot => self
+                .copilot_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
+            ActiveProvider::Antigravity => self
+                .antigravity_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
+            ActiveProvider::Gemini => self
+                .gemini_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
+            ActiveProvider::Cursor => self
+                .cursor_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
+            ActiveProvider::Bedrock => self
+                .bedrock_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
+            ActiveProvider::OpenRouter => self
+                .openrouter_provider()
+                .map(|provider| provider.supports_image_input())
+                .unwrap_or(false),
         }
     }
 
@@ -1089,7 +677,7 @@ impl Provider for MultiProvider {
         // must never silently fall through to another provider when the target
         // is unavailable or when --provider locks a different backend.
         if let Some((target, _prefix, target_model)) =
-            Self::explicit_model_provider_prefix(requested_model)
+            explicit_model_provider_prefix(requested_model)
         {
             self.ensure_provider_lock_allows_model_target(target, requested_model)?;
             return self.set_model_on_provider(target, target_model);
@@ -1125,7 +713,7 @@ impl Provider for MultiProvider {
         // --provider lock was requested.
         let target_provider = provider_for_model(model);
         if let Some(target_provider) = target_provider
-            && let Some(target) = Self::provider_from_model_key(target_provider)
+            && let Some(target) = provider_from_model_key(target_provider)
         {
             self.set_model_on_provider(target, model)
         } else {
@@ -1171,6 +759,10 @@ impl Provider for MultiProvider {
             ActiveProvider::Cursor => self
                 .cursor_provider()
                 .map(|cursor| cursor.available_models_for_switching())
+                .unwrap_or_default(),
+            ActiveProvider::Bedrock => self
+                .bedrock_provider()
+                .map(|bedrock| bedrock.available_models_for_switching())
                 .unwrap_or_default(),
             ActiveProvider::OpenRouter => self
                 .openrouter_provider()
@@ -1280,6 +872,7 @@ impl Provider for MultiProvider {
         }
 
         // OpenAI models
+        let openai_auth = crate::auth::AuthStatus::check_fast();
         for model in openai_models {
             let availability = model_availability_for_account(&model);
             let (available, detail) = if self.openai_provider().is_none() {
@@ -1299,7 +892,52 @@ impl Provider for MultiProvider {
                     }
                 }
             };
-            routes.push(build_openai_oauth_route(&model, available, detail));
+            if openai_auth.openai_has_oauth {
+                routes.push(build_openai_oauth_route(&model, available, detail.clone()));
+            }
+            if openai_auth.openai_has_api_key {
+                routes.push(build_openai_api_key_route(
+                    &model,
+                    self.openai_provider().is_some(),
+                    String::new(),
+                ));
+            }
+            if !openai_auth.openai_has_oauth && !openai_auth.openai_has_api_key {
+                routes.push(build_openai_oauth_route(&model, false, detail));
+            }
+        }
+
+        let mut added_direct_openai_compatible_routes = false;
+        for profile in crate::provider_catalog::openai_compatible_profiles()
+            .iter()
+            .copied()
+        {
+            if !crate::provider_catalog::openai_compatible_profile_is_configured(profile) {
+                continue;
+            }
+            let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
+            let api_method = format!("openai-compatible:{}", resolved.id);
+            for model in crate::provider_catalog::openai_compatible_profile_static_models(profile) {
+                let already_present = routes.iter().any(|route| {
+                    route.model == model
+                        && route.provider == resolved.display_name
+                        && (route.api_method == "openai-compatible"
+                            || route.api_method == api_method)
+                });
+                if already_present {
+                    added_direct_openai_compatible_routes = true;
+                    continue;
+                }
+                routes.push(ModelRoute {
+                    model,
+                    provider: resolved.display_name.clone(),
+                    api_method: api_method.clone(),
+                    available: true,
+                    detail: resolved.api_base.clone(),
+                    cheapness: None,
+                });
+                added_direct_openai_compatible_routes = true;
+            }
         }
 
         // GitHub Copilot models
@@ -1362,6 +1000,23 @@ impl Provider for MultiProvider {
             }
         }
 
+        // AWS Bedrock models and inference profiles
+        {
+            if let Some(bedrock) = self.bedrock_provider() {
+                routes.extend(bedrock.model_routes());
+            } else if bedrock::BedrockProvider::has_credentials() {
+                let bedrock = bedrock::BedrockProvider::new();
+                routes.extend(bedrock.model_routes().into_iter().map(|mut route| {
+                    if route.detail.trim().is_empty() {
+                        route.detail =
+                            "credentials configured; provider will initialize on selection"
+                                .to_string();
+                    }
+                    route
+                }));
+            }
+        }
+
         // OpenRouter models (with per-provider endpoints)
         let has_openrouter = self.openrouter_provider().is_some();
         if let Some(openrouter) = self.openrouter_provider() {
@@ -1398,7 +1053,16 @@ impl Provider for MultiProvider {
                 // Auto route: hint which provider it would likely pick
                 let auto_detail = cached
                     .as_ref()
-                    .and_then(|(eps, _)| eps.first().map(|ep| format!("→ {}", ep.provider_name)))
+                    .and_then(|(eps, _)| {
+                        eps.first().map(|ep| {
+                            let endpoint_detail = ep.detail_string();
+                            if endpoint_detail.trim().is_empty() {
+                                format!("→ {}", ep.provider_name)
+                            } else {
+                                format!("→ {} · {}", ep.provider_name, endpoint_detail)
+                            }
+                        })
+                    })
                     .unwrap_or_default();
                 if supports_openrouter_provider_features {
                     routes.push(build_openrouter_auto_route(
@@ -1430,39 +1094,6 @@ impl Provider for MultiProvider {
                         ));
                     }
                 }
-            }
-        }
-
-        let mut added_direct_openai_compatible_routes = false;
-        for profile in crate::provider_catalog::openai_compatible_profiles()
-            .iter()
-            .copied()
-        {
-            if !crate::provider_catalog::openai_compatible_profile_is_configured(profile) {
-                continue;
-            }
-            let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
-            let api_method = format!("openai-compatible:{}", resolved.id);
-            for model in crate::provider_catalog::openai_compatible_profile_static_models(profile) {
-                let already_present = routes.iter().any(|route| {
-                    route.model == model
-                        && route.provider == resolved.display_name
-                        && (route.api_method == "openai-compatible"
-                            || route.api_method == api_method)
-                });
-                if already_present {
-                    added_direct_openai_compatible_routes = true;
-                    continue;
-                }
-                routes.push(ModelRoute {
-                    model,
-                    provider: resolved.display_name.clone(),
-                    api_method: api_method.clone(),
-                    available: true,
-                    detail: resolved.api_base.clone(),
-                    cheapness: None,
-                });
-                added_direct_openai_compatible_routes = true;
             }
         }
 
@@ -1531,7 +1162,7 @@ impl Provider for MultiProvider {
             ));
         }
 
-        routes
+        dedupe_model_routes(routes)
     }
 
     async fn prefetch_models(&self) -> Result<()> {
@@ -1574,6 +1205,12 @@ impl Provider for MultiProvider {
             let cursor = self.cursor_provider();
             if let Some(cursor) = cursor {
                 cursor.prefetch_models().await?;
+            }
+        }
+        {
+            let bedrock = self.bedrock_provider();
+            if let Some(bedrock) = bedrock {
+                bedrock.prefetch_models().await?;
             }
         }
         Ok(())
@@ -1670,7 +1307,7 @@ impl Provider for MultiProvider {
                 .antigravity
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                Some(Arc::new(antigravity::AntigravityCliProvider::new()));
+                Some(Arc::new(antigravity::AntigravityProvider::new()));
         }
 
         let already_has_gemini = self.gemini_provider().is_some();
@@ -1697,6 +1334,17 @@ impl Provider for MultiProvider {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                 Some(Arc::new(cursor::CursorCliProvider::new()));
         }
+
+        let already_has_bedrock = self.bedrock_provider().is_some();
+        if !already_has_bedrock && bedrock::BedrockProvider::has_credentials() {
+            crate::logging::info("Hot-initialized AWS Bedrock provider after login");
+            *self
+                .bedrock
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                Some(Arc::new(bedrock::BedrockProvider::new()));
+        }
+
         if let Some(anthropic) = self.anthropic_provider() {
             Self::spawn_post_auth_model_refresh(anthropic, "Anthropic");
         }
@@ -1717,6 +1365,9 @@ impl Provider for MultiProvider {
         }
         if let Some(openrouter) = self.openrouter_provider() {
             Self::spawn_post_auth_model_refresh(openrouter, "OpenRouter");
+        }
+        if let Some(bedrock) = self.bedrock_provider() {
+            Self::spawn_post_auth_model_refresh(bedrock, "AWS Bedrock");
         }
     }
 
@@ -1755,6 +1406,7 @@ impl Provider for MultiProvider {
                 .cursor_provider()
                 .map(|o| o.handles_tools_internally())
                 .unwrap_or(false),
+            ActiveProvider::Bedrock => false, // jcode executes Bedrock tool calls
             ActiveProvider::OpenRouter => false, // jcode executes tools
         }
     }
@@ -1767,6 +1419,7 @@ impl Provider for MultiProvider {
             ActiveProvider::Antigravity => None,
             ActiveProvider::Gemini => None,
             ActiveProvider::Cursor => None,
+            ActiveProvider::Bedrock => None,
             ActiveProvider::OpenRouter => None,
         }
     }
@@ -1906,6 +1559,10 @@ impl Provider for MultiProvider {
                 .cursor_provider()
                 .map(|o| o.supports_compaction())
                 .unwrap_or(false),
+            ActiveProvider::Bedrock => self
+                .bedrock_provider()
+                .map(|o| o.uses_jcode_compaction())
+                .unwrap_or(false),
             ActiveProvider::OpenRouter => self
                 .openrouter_provider()
                 .map(|o| o.supports_compaction())
@@ -1944,6 +1601,7 @@ impl Provider for MultiProvider {
                 .cursor_provider()
                 .map(|o| o.uses_jcode_compaction())
                 .unwrap_or(false),
+            ActiveProvider::Bedrock => false,
             ActiveProvider::OpenRouter => self
                 .openrouter_provider()
                 .map(|o| o.uses_jcode_compaction())
@@ -2037,6 +1695,9 @@ impl Provider for MultiProvider {
                     Err(anyhow::anyhow!("Cursor provider unavailable"))
                 }
             }
+            ActiveProvider::Bedrock => Err(anyhow::anyhow!(
+                "AWS Bedrock does not support native compaction"
+            )),
             ActiveProvider::OpenRouter => {
                 let provider = self.openrouter_provider();
                 if let Some(openrouter) = provider {
@@ -2054,17 +1715,17 @@ impl Provider for MultiProvider {
         }
     }
 
-    fn set_premium_mode(&self, mode: copilot::PremiumMode) {
+    fn set_premium_mode(&self, mode: PremiumMode) {
         if let Some(copilot) = self.copilot_provider() {
             copilot.set_premium_mode(mode);
         }
     }
 
-    fn premium_mode(&self) -> copilot::PremiumMode {
+    fn premium_mode(&self) -> PremiumMode {
         if let Some(copilot) = self.copilot_provider() {
             copilot.get_premium_mode()
         } else {
-            copilot::PremiumMode::Normal
+            PremiumMode::Normal
         }
     }
 
@@ -2106,6 +1767,10 @@ impl Provider for MultiProvider {
                 .unwrap_or(DEFAULT_CONTEXT_LIMIT),
             ActiveProvider::Cursor => self
                 .cursor_provider()
+                .map(|o| o.context_window())
+                .unwrap_or(DEFAULT_CONTEXT_LIMIT),
+            ActiveProvider::Bedrock => self
+                .bedrock_provider()
                 .map(|o| o.context_window())
                 .unwrap_or(DEFAULT_CONTEXT_LIMIT),
             ActiveProvider::OpenRouter => self
@@ -2163,6 +1828,11 @@ impl Provider for MultiProvider {
         } else {
             None
         };
+        let bedrock_provider = if self.bedrock_provider().is_some() {
+            Some(Arc::new(bedrock::BedrockProvider::new()))
+        } else {
+            None
+        };
         let openrouter = if self
             .openrouter
             .read()
@@ -2182,6 +1852,7 @@ impl Provider for MultiProvider {
             antigravity: RwLock::new(antigravity_provider),
             gemini: RwLock::new(gemini_provider),
             cursor: RwLock::new(cursor_provider),
+            bedrock: RwLock::new(bedrock_provider),
             openrouter: RwLock::new(openrouter),
             active: RwLock::new(active),
             use_claude_cli: self.use_claude_cli,
@@ -2197,6 +1868,8 @@ impl Provider for MultiProvider {
             let _ = provider.set_model(&format!("antigravity:{}", current_model));
         } else if matches!(active, ActiveProvider::Cursor) {
             let _ = provider.set_model(&format!("cursor:{}", current_model));
+        } else if matches!(active, ActiveProvider::Bedrock) {
+            let _ = provider.set_model(&format!("bedrock:{}", current_model));
         } else {
             let _ = provider.set_model(&current_model);
         }
@@ -2219,6 +1892,7 @@ impl Provider for MultiProvider {
             ActiveProvider::Antigravity => None,
             ActiveProvider::Gemini => None,
             ActiveProvider::Cursor => None,
+            ActiveProvider::Bedrock => None,
             ActiveProvider::OpenRouter => None,
         }
     }

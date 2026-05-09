@@ -17,105 +17,25 @@
 
 use crate::message::{ContentBlock, Message, Role};
 use crate::provider::Provider;
+use crate::provider::openai_request::{
+    openai_encrypted_content_fallback_summary, openai_encrypted_content_is_sendable,
+};
 use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
 
-/// Default token budget (200k tokens - matches Claude's actual context limit)
-const DEFAULT_TOKEN_BUDGET: usize = 200_000;
-
-/// Trigger compaction at this percentage of budget
-const COMPACTION_THRESHOLD: f32 = 0.80;
-
-/// If context is above this threshold when compaction starts, do a synchronous
-/// hard-compact (drop old messages) so the API call doesn't fail.
-const CRITICAL_THRESHOLD: f32 = 0.95;
-
-/// Minimum threshold for manual compaction (can compact at any time above this)
-const MANUAL_COMPACT_MIN_THRESHOLD: f32 = 0.10;
-
-/// Keep this many recent turns verbatim (not summarized)
-const RECENT_TURNS_TO_KEEP: usize = 10;
-
-/// Absolute minimum turns to keep during emergency compaction
-const MIN_TURNS_TO_KEEP: usize = 2;
-
-/// Max chars for a single tool result during emergency truncation
-const EMERGENCY_TOOL_RESULT_MAX_CHARS: usize = 4000;
-
-/// Approximate chars per token for estimation
-const CHARS_PER_TOKEN: usize = 4;
-
-/// Fixed token overhead for system prompt + tool definitions.
-/// These are not counted in message content but do count toward the context limit.
-/// Estimated conservatively: ~8k tokens for system prompt + ~10k for 50+ tools.
-const SYSTEM_OVERHEAD_TOKENS: usize = 18_000;
-
-// ── Proactive mode constants ────────────────────────────────────────────────
-
-/// Rolling window size for token history (proactive/semantic modes)
-const TOKEN_HISTORY_WINDOW: usize = 20;
-
-// ── Semantic mode constants ─────────────────────────────────────────────────
-
-/// Maximum characters to embed per message (first N chars capture semantic content)
-const EMBED_MAX_CHARS_PER_MSG: usize = 512;
-
-/// Rolling window of per-turn embeddings used for topic-shift detection
-const EMBEDDING_HISTORY_WINDOW: usize = 10;
-
-/// Per-manager semantic embedding cache capacity.
-///
-/// This avoids repeated embedding lookups for the same truncated message and
-/// goal texts across successive semantic compaction checks.
-const SEMANTIC_EMBED_CACHE_CAPACITY: usize = 256;
-
-const SUMMARY_PROMPT: &str = r#"Summarize our conversation so you can continue this work later.
-
-Write in natural language with these sections:
-- **Context:** What we're working on and why (1-2 sentences)
-- **What we did:** Key actions taken, files changed, problems solved
-- **Current state:** What works, what's broken, what's next
-- **User preferences:** Specific requirements or decisions they made
-
-Be concise but preserve important details. You can search the full conversation later if you need exact error messages or code snippets."#;
-
-/// A completed summary covering turns up to a certain point
-#[derive(Debug, Clone)]
-pub struct Summary {
-    pub text: String,
-    pub openai_encrypted_content: Option<String>,
-    pub covers_up_to_turn: usize,
-    pub original_turn_count: usize,
-}
-
-/// Event emitted when compaction is applied
-#[derive(Debug, Clone)]
-pub struct CompactionEvent {
-    pub trigger: String,
-    pub pre_tokens: Option<u64>,
-    pub post_tokens: Option<u64>,
-    pub tokens_saved: Option<u64>,
-    pub duration_ms: Option<u64>,
-    pub messages_dropped: Option<usize>,
-    pub messages_compacted: Option<usize>,
-    pub summary_chars: Option<usize>,
-    pub active_messages: Option<usize>,
-}
-
-/// What happened when ensure_context_fits was called
-#[derive(Debug, Clone, PartialEq)]
-pub enum CompactionAction {
-    /// Nothing needed — context is fine
-    None,
-    /// Background summarization started (context 80-95%)
-    BackgroundStarted { trigger: String },
-    /// Emergency hard compact performed (context >= 95%)
-    /// Contains number of messages dropped
-    HardCompacted(usize),
-}
+pub use jcode_compaction_core::{
+    CHARS_PER_TOKEN, COMPACTION_THRESHOLD, CRITICAL_THRESHOLD, CompactionAction, CompactionEvent,
+    CompactionStats, DEFAULT_TOKEN_BUDGET, EMBED_MAX_CHARS_PER_MSG, EMBEDDING_HISTORY_WINDOW,
+    EMERGENCY_TOOL_RESULT_MAX_CHARS, MANUAL_COMPACT_MIN_THRESHOLD, MIN_TURNS_TO_KEEP,
+    RECENT_TURNS_TO_KEEP, SEMANTIC_EMBED_CACHE_CAPACITY, SUMMARY_PROMPT, SYSTEM_OVERHEAD_TOKENS,
+    Summary, TOKEN_HISTORY_WINDOW, build_compaction_prompt, build_emergency_summary_text,
+    compacted_summary_text_block, content_char_count, emergency_truncate_tool_results,
+    estimate_compaction_tokens, mean_embedding, message_char_count, safe_compaction_cutoff,
+    semantic_cache_key, semantic_goal_text, semantic_message_text, summary_payload_char_count,
+};
 
 /// Result from background compaction task
 struct CompactionResult {
@@ -276,7 +196,7 @@ impl CompactionManager {
         self.suppress_compaction_until_new_message = false;
         self.active_message_chars = self
             .active_message_chars
-            .saturating_add(Self::content_char_count(content));
+            .saturating_add(content_char_count(content));
         self.active_message_chars_dirty = false;
     }
 
@@ -305,7 +225,7 @@ impl CompactionManager {
     pub fn seed_restored_messages_with(&mut self, all_messages: &[Message]) {
         self.total_turns = all_messages.len();
         self.suppress_compaction_until_new_message = !all_messages.is_empty();
-        self.active_message_chars = all_messages.iter().map(Self::message_char_count).sum();
+        self.active_message_chars = all_messages.iter().map(message_char_count).sum();
         self.active_message_chars_dirty = false;
     }
 
@@ -317,7 +237,7 @@ impl CompactionManager {
         self.suppress_compaction_until_new_message = !all_messages.is_empty();
         self.active_message_chars = all_messages
             .iter()
-            .map(|message| Self::content_char_count(&message.content))
+            .map(|message| content_char_count(&message.content))
             .sum();
         self.active_message_chars_dirty = false;
     }
@@ -362,7 +282,7 @@ impl CompactionManager {
         self.active_message_chars = self
             .active_messages(all_messages)
             .iter()
-            .map(Self::message_char_count)
+            .map(message_char_count)
             .sum();
         self.active_message_chars_dirty = false;
     }
@@ -376,7 +296,7 @@ impl CompactionManager {
         let start = self.compacted_count.min(all_messages.len());
         self.active_message_chars = all_messages[start..]
             .iter()
-            .map(|message| Self::content_char_count(&message.content))
+            .map(|message| content_char_count(&message.content))
             .sum();
         self.active_message_chars_dirty = false;
     }
@@ -392,6 +312,41 @@ impl CompactionManager {
                 original_turn_count: summary.original_turn_count,
                 compacted_count: self.compacted_count,
             })
+    }
+
+    /// Drop provider-native OpenAI compaction state when it can no longer be
+    /// replayed within OpenAI's per-string request limit. The compacted prefix
+    /// remains compacted, but future requests use a small text fallback instead
+    /// of bricking the session with an oversized `encrypted_content` field.
+    pub fn discard_oversized_openai_native_compaction(&mut self) -> bool {
+        let Some(summary) = self.active_summary.as_mut() else {
+            return false;
+        };
+        let Some(encrypted_content) = summary.openai_encrypted_content.as_ref() else {
+            return false;
+        };
+        if openai_encrypted_content_is_sendable(encrypted_content) {
+            return false;
+        }
+
+        let encrypted_content_len = encrypted_content.len();
+        crate::logging::warn(&format!(
+            "[compaction] Discarding oversized OpenAI native compaction payload ({} chars)",
+            encrypted_content_len,
+        ));
+        summary.openai_encrypted_content = None;
+        let fallback = openai_encrypted_content_fallback_summary(encrypted_content_len);
+        if summary.text.trim().is_empty() {
+            summary.text = fallback;
+        } else if !summary
+            .text
+            .contains("OpenAI native compaction state was discarded")
+        {
+            summary.text.push_str("\n\n");
+            summary.text.push_str(&fallback);
+        }
+        self.observed_input_tokens = None;
+        true
     }
 
     // ── Token snapshot (proactive mode) ────────────────────────────────────
@@ -591,7 +546,7 @@ impl CompactionManager {
 
         // Build goal text from recent turns.
         let goal_turns = goal_window_turns.min(active.len());
-        let goal_text = Self::semantic_goal_text(&active[active.len() - goal_turns..]);
+        let goal_text = semantic_goal_text(&active[active.len() - goal_turns..]);
 
         if goal_text.is_empty() {
             return standard_cutoff;
@@ -607,7 +562,7 @@ impl CompactionManager {
         let mut earliest_high_relevance = standard_cutoff;
 
         for (idx, msg) in active[..standard_cutoff].iter().enumerate() {
-            let text = Self::semantic_message_text(msg);
+            let text = semantic_message_text(msg);
 
             if text.is_empty() {
                 continue;
@@ -662,7 +617,7 @@ impl CompactionManager {
         {
             self.active_messages(all_messages)
                 .iter()
-                .map(Self::message_char_count)
+                .map(message_char_count)
                 .sum()
         } else {
             self.active_message_chars
@@ -671,47 +626,16 @@ impl CompactionManager {
 
     /// Get current token estimate using the caller's message list
     pub fn token_estimate_with(&self, all_messages: &[Message]) -> usize {
-        let mut total_chars = 0;
-
-        if let Some(ref summary) = self.active_summary {
-            total_chars += summary
-                .openai_encrypted_content
-                .as_ref()
-                .map(|s| s.len())
-                .unwrap_or_else(|| summary.text.len());
-        }
-
-        total_chars += self.active_message_chars_with(all_messages);
-
-        let msg_tokens = total_chars / CHARS_PER_TOKEN;
-        // Add overhead for system prompt + tool definitions, which are not in the message list
-        // but do count toward the context limit. Scale the overhead to the budget so
-        // tests with tiny budgets aren't affected.
-        let overhead = if self.token_budget >= DEFAULT_TOKEN_BUDGET / 2 {
-            SYSTEM_OVERHEAD_TOKENS
-        } else {
-            0
-        };
-        msg_tokens + overhead
+        estimate_compaction_tokens(
+            self.active_summary.as_ref(),
+            self.active_message_chars_with(all_messages),
+            self.token_budget,
+        )
     }
 
     /// Get current token estimate (backward compat — uses 0 messages, only summary + observed)
     pub fn token_estimate(&self) -> usize {
-        let mut total_chars = 0;
-        if let Some(ref summary) = self.active_summary {
-            total_chars += summary
-                .openai_encrypted_content
-                .as_ref()
-                .map(|s| s.len())
-                .unwrap_or_else(|| summary.text.len());
-        }
-        let msg_tokens = total_chars / CHARS_PER_TOKEN;
-        let overhead = if self.token_budget >= DEFAULT_TOKEN_BUDGET / 2 {
-            SYSTEM_OVERHEAD_TOKENS
-        } else {
-            0
-        };
-        msg_tokens + overhead
+        estimate_compaction_tokens(self.active_summary.as_ref(), 0, self.token_budget)
     }
 
     /// Store provider-reported input token usage for compaction decisions.
@@ -794,7 +718,7 @@ impl CompactionManager {
         }
 
         // Adjust cutoff to not split tool call/result pairs
-        cutoff = Self::safe_cutoff_static(active, cutoff);
+        cutoff = safe_compaction_cutoff(active, cutoff);
         if cutoff == 0 {
             return;
         }
@@ -930,7 +854,7 @@ impl CompactionManager {
             return Err("No messages available to compact after keeping recent turns".to_string());
         }
 
-        cutoff = Self::safe_cutoff_static(active, cutoff);
+        cutoff = safe_compaction_cutoff(active, cutoff);
         if cutoff == 0 {
             return Err("Cannot compact - would split tool call/result pairs".to_string());
         }
@@ -974,63 +898,6 @@ impl CompactionManager {
         )
     }
 
-    /// Find a safe cutoff point that doesn't split tool call/result pairs.
-    /// Static version that works on a message slice.
-    fn safe_cutoff_static(messages: &[Message], initial_cutoff: usize) -> usize {
-        let mut cutoff = initial_cutoff;
-
-        // Track tool call/result ids in the kept portion.
-        let mut available_tool_ids = std::collections::HashSet::new();
-        let mut missing_tool_ids = std::collections::HashSet::new();
-
-        for msg in &messages[cutoff..] {
-            for block in &msg.content {
-                match block {
-                    ContentBlock::ToolUse { id, .. } => {
-                        available_tool_ids.insert(id.clone());
-                        missing_tool_ids.remove(id);
-                    }
-                    ContentBlock::ToolResult { tool_use_id, .. } => {
-                        if !available_tool_ids.contains(tool_use_id) {
-                            missing_tool_ids.insert(tool_use_id.clone());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if missing_tool_ids.is_empty() {
-            return cutoff;
-        }
-
-        // Walk backward once, progressively growing the kept suffix until every
-        // kept tool result has its matching tool use in the same suffix.
-        for (idx, msg) in messages[..cutoff].iter().enumerate().rev() {
-            for block in &msg.content {
-                match block {
-                    ContentBlock::ToolUse { id, .. } => {
-                        available_tool_ids.insert(id.clone());
-                        missing_tool_ids.remove(id);
-                    }
-                    ContentBlock::ToolResult { tool_use_id, .. } => {
-                        if !available_tool_ids.contains(tool_use_id) {
-                            missing_tool_ids.insert(tool_use_id.clone());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if missing_tool_ids.is_empty() {
-                cutoff = idx;
-                return cutoff;
-            }
-        }
-
-        // If we couldn't find every matching tool call, don't compact at all.
-        0
-    }
-
     /// Check if background compaction is done and apply it, updating rolling
     /// token-estimate state from the provided full message list.
     pub fn check_and_apply_compaction_with(&mut self, all_messages: &[Message]) {
@@ -1054,7 +921,7 @@ impl CompactionManager {
                     .active_messages(all_messages)
                     .iter()
                     .take(self.pending_cutoff)
-                    .map(Self::message_char_count)
+                    .map(message_char_count)
                     .sum();
                 let summary = Summary {
                     text: result.summary_text,
@@ -1072,6 +939,7 @@ impl CompactionManager {
 
                 // Store summary
                 self.active_summary = Some(summary);
+                self.discard_oversized_openai_native_compaction();
                 self.observed_input_tokens = None;
                 let post_tokens = self.effective_token_count_with(all_messages) as u64;
                 self.last_compaction = Some(CompactionEvent {
@@ -1143,6 +1011,7 @@ impl CompactionManager {
     /// Takes the full message list from the caller.
     pub fn messages_for_api_with(&mut self, all_messages: &[Message]) -> Vec<Message> {
         self.check_and_apply_compaction_with(all_messages);
+        self.discard_oversized_openai_native_compaction();
 
         let active = self.active_messages(all_messages);
 
@@ -1155,10 +1024,7 @@ impl CompactionManager {
                         encrypted_content: encrypted_content.clone(),
                     })
                     .unwrap_or_else(|| ContentBlock::Text {
-                        text: format!(
-                            "## Previous Conversation Summary\n\n{}\n\n---\n\n",
-                            summary.text
-                        ),
+                        text: compacted_summary_text_block(&summary.text),
                         cache_control: None,
                     });
 
@@ -1184,6 +1050,7 @@ impl CompactionManager {
     /// Returns only summary if present, or empty vec.
     pub fn messages_for_api(&mut self) -> Vec<Message> {
         self.check_and_apply_compaction();
+        self.discard_oversized_openai_native_compaction();
 
         // Without caller messages, we can only return the summary
         match &self.active_summary {
@@ -1195,10 +1062,7 @@ impl CompactionManager {
                         encrypted_content: encrypted_content.clone(),
                     })
                     .unwrap_or_else(|| ContentBlock::Text {
-                        text: format!(
-                            "## Previous Conversation Summary\n\n{}\n\n---\n\n",
-                            summary.text
-                        ),
+                        text: compacted_summary_text_block(&summary.text),
                         cache_control: None,
                     });
                 vec![Message {
@@ -1241,12 +1105,7 @@ impl CompactionManager {
     pub fn summary_chars(&self) -> usize {
         self.active_summary
             .as_ref()
-            .map(|s| {
-                s.openai_encrypted_content
-                    .as_ref()
-                    .map(|value| value.len())
-                    .unwrap_or_else(|| s.text.len())
-            })
+            .map(summary_payload_char_count)
             .unwrap_or(0)
     }
 
@@ -1284,75 +1143,8 @@ impl CompactionManager {
         }
     }
 
-    fn message_char_count(msg: &Message) -> usize {
-        Self::content_char_count(&msg.content)
-    }
-
-    fn content_char_count(content: &[ContentBlock]) -> usize {
-        content
-            .iter()
-            .map(|block| match block {
-                ContentBlock::Text { text, .. } => text.len(),
-                ContentBlock::Reasoning { text } => text.len(),
-                ContentBlock::ToolUse { input, .. } => input.to_string().len() + 50,
-                ContentBlock::ToolResult { content, .. } => content.len() + 20,
-                ContentBlock::Image { data, .. } => data.len(),
-                ContentBlock::OpenAICompaction { encrypted_content } => encrypted_content.len(),
-            })
-            .sum()
-    }
-
-    fn semantic_goal_text(messages: &[Message]) -> String {
-        let mut text = String::new();
-        for msg in messages {
-            for block in &msg.content {
-                match block {
-                    ContentBlock::Text {
-                        text: block_text, ..
-                    } => Self::push_semantic_excerpt(&mut text, block_text, 200),
-                    ContentBlock::ToolResult { content, .. } => {
-                        Self::push_semantic_excerpt(&mut text, content, 100)
-                    }
-                    _ => {}
-                }
-            }
-        }
-        text
-    }
-
-    fn semantic_message_text(msg: &Message) -> String {
-        let mut text = String::new();
-        for block in &msg.content {
-            if let ContentBlock::Text {
-                text: block_text, ..
-            } = block
-            {
-                Self::push_semantic_excerpt(&mut text, block_text, EMBED_MAX_CHARS_PER_MSG);
-            }
-        }
-        text
-    }
-
-    fn push_semantic_excerpt(target: &mut String, source: &str, max_chars: usize) {
-        if source.is_empty() {
-            return;
-        }
-        if !target.is_empty() {
-            target.push(' ');
-        }
-        target.extend(source.chars().take(max_chars));
-    }
-
-    fn hash_text(text: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut hasher);
-        hasher.finish()
-    }
-
     fn cached_semantic_embedding(&mut self, text: &str) -> Option<Vec<f32>> {
-        let key = Self::hash_text(text);
+        let key = semantic_cache_key(text);
 
         if let Some((cached, recency)) = self.semantic_embed_cache.get_mut(&key) {
             let counter = self.semantic_embed_cache_counter;
@@ -1415,7 +1207,7 @@ impl CompactionManager {
         }
 
         let pre_tokens = self.effective_token_count_with(all_messages) as u64;
-        let active_char_counts: Vec<usize> = active.iter().map(Self::message_char_count).collect();
+        let active_char_counts: Vec<usize> = active.iter().map(message_char_count).collect();
         let mut remaining_suffix_chars = vec![0usize; active_char_counts.len() + 1];
         for idx in (0..active_char_counts.len()).rev() {
             remaining_suffix_chars[idx] =
@@ -1426,7 +1218,7 @@ impl CompactionManager {
         let mut cutoff;
         loop {
             cutoff = active.len().saturating_sub(turns_to_keep);
-            cutoff = Self::safe_cutoff_static(active, cutoff);
+            cutoff = safe_compaction_cutoff(active, cutoff);
 
             if cutoff > 0 {
                 let remaining_tokens = remaining_suffix_chars[cutoff] / CHARS_PER_TOKEN;
@@ -1437,7 +1229,7 @@ impl CompactionManager {
 
             if turns_to_keep <= MIN_TURNS_TO_KEEP {
                 cutoff = active.len().saturating_sub(MIN_TURNS_TO_KEEP);
-                cutoff = Self::safe_cutoff_static(active, cutoff);
+                cutoff = safe_compaction_cutoff(active, cutoff);
                 break;
             }
             turns_to_keep = (turns_to_keep / 2).max(MIN_TURNS_TO_KEEP);
@@ -1448,74 +1240,18 @@ impl CompactionManager {
         }
 
         let dropped_count = cutoff;
-
-        let mut summary_parts: Vec<String> = Vec::new();
-
-        if let Some(ref existing) = self.active_summary {
-            summary_parts.push(existing.text.clone());
-        }
-
-        summary_parts.push(format!(
-            "**[Emergency compaction]**: {} messages were dropped to recover from context overflow. \
-             The conversation had ~{}k tokens which exceeded the {}k limit.",
+        let summary_text = build_emergency_summary_text(
+            self.active_summary
+                .as_ref()
+                .map(|summary| summary.text.as_str()),
             dropped_count,
-            pre_tokens / 1000,
-            self.token_budget / 1000,
-        ));
-
-        let mut file_mentions = Vec::new();
-        let mut tool_names = std::collections::HashSet::new();
-        for msg in &active[..cutoff] {
-            for block in &msg.content {
-                match block {
-                    ContentBlock::ToolUse { name, .. } => {
-                        tool_names.insert(name.clone());
-                    }
-                    ContentBlock::Text { text, .. } => {
-                        for word in text.split_whitespace() {
-                            if (word.contains('/') || word.contains('.'))
-                                && word.len() > 3
-                                && word.len() < 120
-                                && !word.starts_with("http")
-                                && (word.contains(".rs")
-                                    || word.contains(".ts")
-                                    || word.contains(".py")
-                                    || word.contains(".toml")
-                                    || word.contains(".json")
-                                    || word.starts_with("src/")
-                                    || word.starts_with("./"))
-                            {
-                                let cleaned = word.trim_matches(|c: char| {
-                                    !c.is_alphanumeric()
-                                        && c != '/'
-                                        && c != '.'
-                                        && c != '_'
-                                        && c != '-'
-                                });
-                                file_mentions.push(cleaned.to_string());
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if !tool_names.is_empty() {
-            let mut tools: Vec<_> = tool_names.into_iter().collect();
-            tools.sort();
-            summary_parts.push(format!("Tools used: {}", tools.join(", ")));
-        }
-
-        file_mentions.sort();
-        file_mentions.dedup();
-        if !file_mentions.is_empty() {
-            file_mentions.truncate(30);
-            summary_parts.push(format!("Files referenced: {}", file_mentions.join(", ")));
-        }
+            pre_tokens,
+            self.token_budget,
+            &active[..cutoff],
+        );
 
         let summary = Summary {
-            text: summary_parts.join("\n\n"),
+            text: summary_text,
             openai_encrypted_content: None,
             covers_up_to_turn: cutoff,
             original_turn_count: cutoff,
@@ -1560,29 +1296,7 @@ impl CompactionManager {
     pub fn emergency_truncate_with(&mut self, all_messages: &mut [Message]) -> usize {
         let start = self.compacted_count.min(all_messages.len());
         let active = &mut all_messages[start..];
-        let mut truncated = 0;
-
-        for msg in active.iter_mut() {
-            for block in msg.content.iter_mut() {
-                if let ContentBlock::ToolResult { content, .. } = block
-                    && content.len() > EMERGENCY_TOOL_RESULT_MAX_CHARS
-                {
-                    let original_len = content.len();
-                    let keep_head = EMERGENCY_TOOL_RESULT_MAX_CHARS / 2;
-                    let keep_tail = EMERGENCY_TOOL_RESULT_MAX_CHARS / 4;
-                    let head = &content[..keep_head];
-                    let tail_start = original_len.saturating_sub(keep_tail);
-                    let tail = &content[tail_start..];
-                    *content = format!(
-                        "{}\n\n... [{} chars truncated for context recovery] ...\n\n{}",
-                        head,
-                        original_len - keep_head - keep_tail,
-                        tail,
-                    );
-                    truncated += 1;
-                }
-            }
-        }
+        let truncated = emergency_truncate_tool_results(active, EMERGENCY_TOOL_RESULT_MAX_CHARS);
 
         if truncated > 0 {
             self.observed_input_tokens = None;
@@ -1597,51 +1311,35 @@ impl Default for CompactionManager {
     }
 }
 
-/// Stats about compaction state
-#[derive(Debug, Clone)]
-pub struct CompactionStats {
-    pub total_turns: usize,
-    pub active_messages: usize,
-    pub has_summary: bool,
-    pub is_compacting: bool,
-    pub token_estimate: usize,
-    pub effective_tokens: usize,
-    pub observed_input_tokens: Option<u64>,
-    pub context_usage: f32,
-}
-
-/// Compute the mean (centroid) embedding of a set of embedding vectors.
-/// The result is L2-normalized so it can be compared with cosine similarity.
-fn mean_embedding(embeddings: &[&Vec<f32>], dim: usize) -> Vec<f32> {
-    let mut mean = vec![0f32; dim];
-    for emb in embeddings {
-        for (i, v) in emb.iter().enumerate() {
-            if i < dim {
-                mean[i] += v;
-            }
-        }
-    }
-    let n = embeddings.len().max(1) as f32;
-    for v in &mut mean {
-        *v /= n;
-    }
-    // L2-normalize so cosine_similarity (dot product) is meaningful.
-    let norm: f32 = mean.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for v in &mut mean {
-            *v /= norm;
-        }
-    }
-    mean
-}
-
 /// Generate summary using the provider
 async fn generate_compaction_artifact(
     provider: Arc<dyn Provider>,
     messages: Vec<Message>,
-    existing_summary: Option<Summary>,
+    mut existing_summary: Option<Summary>,
 ) -> Result<CompactionResult> {
     let start = Instant::now();
+    if let Some(summary) = existing_summary.as_mut()
+        && let Some(encrypted_content) = summary.openai_encrypted_content.as_ref()
+        && !openai_encrypted_content_is_sendable(encrypted_content)
+    {
+        let encrypted_content_len = encrypted_content.len();
+        crate::logging::warn(&format!(
+            "[compaction] Existing OpenAI native compaction payload is oversized ({} chars); falling back to text summary",
+            encrypted_content_len,
+        ));
+        summary.openai_encrypted_content = None;
+        let fallback = openai_encrypted_content_fallback_summary(encrypted_content_len);
+        if summary.text.trim().is_empty() {
+            summary.text = fallback;
+        } else if !summary
+            .text
+            .contains("OpenAI native compaction state was discarded")
+        {
+            summary.text.push_str("\n\n");
+            summary.text.push_str(&fallback);
+        }
+    }
+
     if let Ok(native) = provider
         .native_compact(
             &messages,
@@ -1654,75 +1352,28 @@ async fn generate_compaction_artifact(
         )
         .await
     {
-        return Ok(CompactionResult {
-            summary_text: native.summary_text.unwrap_or_default(),
-            openai_encrypted_content: native.openai_encrypted_content,
-            covers_up_to_turn: messages.len(),
-            duration_ms: start.elapsed().as_millis() as u64,
-            summarized_messages: messages.len(),
-        });
-    }
-
-    // Build the conversation text for summarization
-    let mut conversation_text = String::new();
-
-    // Include existing summary if present
-    if let Some(ref summary) = existing_summary {
-        conversation_text.push_str("## Previous Summary\n\n");
-        conversation_text.push_str(&summary.text);
-        conversation_text.push_str("\n\n## New Conversation\n\n");
-    }
-
-    // Add messages
-    for msg in &messages {
-        let role_str = match msg.role {
-            Role::User => "User",
-            Role::Assistant => "Assistant",
-        };
-
-        conversation_text.push_str(&format!("**{}:**\n", role_str));
-
-        for block in &msg.content {
-            match block {
-                ContentBlock::Text { text, .. } => {
-                    conversation_text.push_str(text);
-                    conversation_text.push('\n');
-                }
-                ContentBlock::ToolUse { name, input, .. } => {
-                    conversation_text.push_str(&format!("[Tool: {} - {}]\n", name, input));
-                }
-                ContentBlock::ToolResult { content, .. } => {
-                    let truncated = if content.len() > 500 {
-                        format!("{}... (truncated)", crate::util::truncate_str(content, 500))
-                    } else {
-                        content.clone()
-                    };
-                    conversation_text.push_str(&format!("[Result: {}]\n", truncated));
-                }
-                ContentBlock::Reasoning { .. } => {}
-                ContentBlock::Image { .. } => {
-                    conversation_text.push_str("[Image]\n");
-                }
-                ContentBlock::OpenAICompaction { .. } => {
-                    conversation_text.push_str("[OpenAI native compaction]\n");
-                }
-            }
+        if let Some(encrypted_content) = native.openai_encrypted_content.as_ref()
+            && !openai_encrypted_content_is_sendable(encrypted_content)
+        {
+            crate::logging::warn(&format!(
+                "[compaction] OpenAI native compaction returned oversized encrypted_content ({} chars); falling back to text summary",
+                encrypted_content.len(),
+            ));
+        } else {
+            return Ok(CompactionResult {
+                summary_text: native.summary_text.unwrap_or_default(),
+                openai_encrypted_content: native.openai_encrypted_content,
+                covers_up_to_turn: messages.len(),
+                duration_ms: start.elapsed().as_millis() as u64,
+                summarized_messages: messages.len(),
+            });
         }
-        conversation_text.push('\n');
     }
 
-    // Truncate conversation text if it would exceed the provider's context limit.
     let max_prompt_chars = provider.context_window().saturating_sub(4000) * CHARS_PER_TOKEN;
-    let overhead = SUMMARY_PROMPT.len() + 50;
-    if conversation_text.len() + overhead > max_prompt_chars && max_prompt_chars > overhead {
-        let budget = max_prompt_chars - overhead;
-        conversation_text = crate::util::truncate_str(&conversation_text, budget).to_string();
-        conversation_text
-            .push_str("\n\n... [earlier conversation truncated to fit context window]\n");
-    }
+    let prompt = build_compaction_prompt(&messages, existing_summary.as_ref(), max_prompt_chars);
 
     // Generate summary using simple completion
-    let prompt = format!("{}\n\n---\n\n{}", conversation_text, SUMMARY_PROMPT);
     let summary = provider
         .complete_simple(
             &prompt,

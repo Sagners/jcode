@@ -135,6 +135,7 @@ impl Agent {
             let mut tool_calls: Vec<ToolCall> = Vec::new();
             let mut current_tool: Option<ToolCall> = None;
             let mut current_tool_input = String::new();
+            let mut generated_image_contexts: Vec<Vec<ContentBlock>> = Vec::new();
             let mut usage_input: Option<u64> = None;
             let mut usage_output: Option<u64> = None;
             let mut usage_cache_read: Option<u64> = None;
@@ -300,6 +301,23 @@ impl Agent {
                                 crate::message::GENERATED_IMAGE_TOOL_NAME,
                                 summary
                             );
+                        }
+                        if self.provider.supports_image_input() {
+                            if let Some(blocks) =
+                                crate::message::generated_image_visual_context_blocks(
+                                    &path,
+                                    metadata_path.as_deref(),
+                                    &output_format,
+                                    revised_prompt.as_deref(),
+                                )
+                            {
+                                generated_image_contexts.push(blocks);
+                            } else {
+                                crate::logging::warn(&format!(
+                                    "Generated image was not attached as visual context: {}",
+                                    path
+                                ));
+                            }
                         }
                     }
                     StreamEvent::TokenUsage {
@@ -573,6 +591,17 @@ impl Agent {
                 assistant_message_id.as_ref(),
             );
 
+            if tool_calls.is_empty() && !generated_image_contexts.is_empty() {
+                for blocks in generated_image_contexts.drain(..) {
+                    self.add_message(Role::User, blocks);
+                }
+                self.session.save()?;
+                logging::info(
+                    "Continuing turn so model can inspect generated image visual context",
+                );
+                continue;
+            }
+
             // If no tool calls, we're done
             if tool_calls.is_empty() {
                 if self.maybe_continue_incomplete_response(
@@ -598,6 +627,16 @@ impl Agent {
             if self.provider.handles_tools_internally() {
                 tool_calls.retain(|tc| JCODE_NATIVE_TOOLS.contains(&tc.name.as_str()));
                 if tool_calls.is_empty() {
+                    if !generated_image_contexts.is_empty() {
+                        for blocks in generated_image_contexts.drain(..) {
+                            self.add_message(Role::User, blocks);
+                        }
+                        self.session.save()?;
+                        logging::info(
+                            "Continuing turn so model can inspect generated image visual context",
+                        );
+                        continue;
+                    }
                     logging::info("Provider handles tools internally - task complete");
                     break;
                 }
@@ -607,11 +646,36 @@ impl Agent {
             // Execute tools and add results
             let mut tool_results_dirty = false;
             for tc in tool_calls {
-                self.validate_tool_allowed(&tc.name)?;
-
                 let message_id = assistant_message_id
                     .clone()
                     .unwrap_or_else(|| self.session.id.clone());
+
+                if let Some(error_msg) = tc.validation_error() {
+                    logging::warn(&error_msg);
+                    Bus::global().publish(BusEvent::ToolUpdated(ToolEvent {
+                        session_id: self.session.id.clone(),
+                        message_id: message_id.clone(),
+                        tool_call_id: tc.id.clone(),
+                        tool_name: tc.name.clone(),
+                        status: ToolStatus::Error,
+                        title: None,
+                    }));
+                    if print_output {
+                        println!("\n  → {}", error_msg);
+                    }
+                    self.add_message(
+                        Role::User,
+                        vec![ContentBlock::ToolResult {
+                            tool_use_id: tc.id,
+                            content: error_msg,
+                            is_error: Some(true),
+                        }],
+                    );
+                    tool_results_dirty = true;
+                    continue;
+                }
+
+                self.validate_tool_allowed(&tc.name)?;
 
                 let is_native_tool = JCODE_NATIVE_TOOLS.contains(&tc.name.as_str());
 
@@ -787,6 +851,13 @@ impl Agent {
             }
 
             if tool_results_dirty {
+                self.session.save()?;
+            }
+
+            if !generated_image_contexts.is_empty() {
+                for blocks in generated_image_contexts.drain(..) {
+                    self.add_message(Role::User, blocks);
+                }
                 self.session.save()?;
             }
 

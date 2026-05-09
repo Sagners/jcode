@@ -22,7 +22,7 @@ impl MultiProvider {
             .clone()
     }
 
-    pub(super) fn antigravity_provider(&self) -> Option<Arc<antigravity::AntigravityCliProvider>> {
+    pub(super) fn antigravity_provider(&self) -> Option<Arc<antigravity::AntigravityProvider>> {
         self.antigravity
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -50,6 +50,13 @@ impl MultiProvider {
             .clone()
     }
 
+    pub(super) fn bedrock_provider(&self) -> Option<Arc<bedrock::BedrockProvider>> {
+        self.bedrock
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     pub(super) fn openrouter_provider(&self) -> Option<Arc<openrouter::OpenRouterProvider>> {
         self.openrouter
             .read()
@@ -69,6 +76,7 @@ impl MultiProvider {
             ActiveProvider::Antigravity => self.antigravity_provider().is_some(),
             ActiveProvider::Gemini => self.gemini_provider().is_some(),
             ActiveProvider::Cursor => self.cursor_provider().is_some(),
+            ActiveProvider::Bedrock => self.bedrock_provider().is_some(),
             ActiveProvider::OpenRouter => self.openrouter_provider().is_some(),
         }
     }

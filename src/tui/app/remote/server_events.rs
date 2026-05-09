@@ -247,7 +247,8 @@ pub(in crate::tui::app) fn handle_server_event(
             app.current_message_id = None;
             remote.clear_pending();
             remote.reset_call_output_tokens_seen();
-            let auto_poked = app.schedule_auto_poke_followup_if_needed();
+            let auto_poked = app.schedule_auto_poke_followup_if_needed()
+                || app.schedule_overnight_poke_followup_if_needed();
             if !auto_poked {
                 app.clear_visible_turn_started();
             }
@@ -299,7 +300,8 @@ pub(in crate::tui::app) fn handle_server_event(
                 remote.clear_pending();
                 remote.reset_call_output_tokens_seen();
                 app.note_runtime_memory_event_force("turn_completed", "remote_turn_finished");
-                auto_poked = app.schedule_auto_poke_followup_if_needed();
+                auto_poked = app.schedule_auto_poke_followup_if_needed()
+                    || app.schedule_overnight_poke_followup_if_needed();
                 if !auto_poked {
                     app.clear_visible_turn_started();
                 }
@@ -358,7 +360,7 @@ pub(in crate::tui::app) fn handle_server_event(
                 crate::provider::parse_failover_prompt_message(&message).is_some();
             app.push_display_message(DisplayMessage {
                 role: "error".to_string(),
-                content: message,
+                content: message.clone(),
                 tool_calls: vec![],
                 duration_secs: None,
                 title: None,
@@ -380,10 +382,26 @@ pub(in crate::tui::app) fn handle_server_event(
             }
             remote.clear_pending();
             remote.reset_call_output_tokens_seen();
+            if app.auto_poke_incomplete_todos
+                && crate::tui::app::commands::is_non_retryable_auto_poke_error(&message)
+            {
+                if app.schedule_pending_remote_retry_with_limit(
+                    "⚠ Remote request failed with a likely non-retryable error.",
+                    2,
+                ) {
+                    return false;
+                }
+                crate::tui::app::commands::stop_auto_poke_for_non_retryable_error(app, &message);
+                return false;
+            }
+            if app.stop_overnight_auto_poke_for_non_retryable_error(&message) {
+                return false;
+            }
             if !is_failover_prompt && !app.schedule_pending_remote_retry("⚠ Remote request failed.")
             {
                 app.clear_pending_remote_retry();
-                return app.schedule_auto_poke_followup_if_needed();
+                return app.schedule_auto_poke_followup_if_needed()
+                    || app.schedule_overnight_poke_followup_if_needed();
             }
             false
         }
@@ -402,6 +420,44 @@ pub(in crate::tui::app) fn handle_server_event(
             app.set_status_notice("Session close requested by coordinator".to_string());
             app.should_quit = true;
             true
+        }
+        ServerEvent::SessionRenamed {
+            session_id,
+            title,
+            display_title,
+        } => {
+            crate::tui::session_picker::invalidate_session_list_cache();
+            let active_session_id = app
+                .remote_session_id
+                .as_deref()
+                .or(app.resume_session_id.as_deref())
+                .unwrap_or(app.session.id.as_str());
+            if active_session_id == session_id {
+                app.session.rename_title(title.clone());
+                if title.is_none()
+                    && app.session.title.is_none()
+                    && display_title != app.session.display_name()
+                {
+                    app.session.title = Some(display_title.clone());
+                }
+                app.update_terminal_title();
+                if title.is_some() {
+                    app.push_display_message(DisplayMessage::system(format!(
+                        "Renamed session to **{}**.",
+                        display_title
+                    )));
+                    app.set_status_notice("Session renamed");
+                } else {
+                    app.push_display_message(DisplayMessage::system(format!(
+                        "Cleared custom name. Session title is now **{}**.",
+                        display_title
+                    )));
+                    app.set_status_notice("Session name cleared");
+                }
+                true
+            } else {
+                false
+            }
         }
         ServerEvent::Reloading { .. } => {
             app.append_reload_message("🔄 Server reload initiated...");

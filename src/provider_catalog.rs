@@ -195,8 +195,31 @@ pub fn openai_compatible_profile_static_models(profile: OpenAiCompatibleProfile)
             push("deepseek-v4-flash");
             push("deepseek-v4-pro");
         }
+        "comtegra" => {
+            push("gpt-oss-120b");
+            push("qwen35-122b");
+            push("gte-qwen2-7b");
+            push("glm-51-nvfp4");
+        }
+        "fpt" => {
+            push("GLM-5.1");
+            push("GLM-4.7");
+            push("Llama-3.3-70B-Instruct");
+        }
         "kimi" => {
             push("kimi-for-coding");
+        }
+        // MiniMax's `/models` endpoint is authenticated and live, but post-login
+        // model activation should not depend on the catalog refresh completing
+        // before the picker/routes are rebuilt. Keep the documented text models
+        // selectable immediately after saving a key.
+        "minimax" => {
+            push("MiniMax-M2.7-highspeed");
+            push("MiniMax-M2.5");
+            push("MiniMax-M2.5-highspeed");
+            push("MiniMax-M2.1");
+            push("MiniMax-M2.1-highspeed");
+            push("MiniMax-M2");
         }
         _ => {}
     }

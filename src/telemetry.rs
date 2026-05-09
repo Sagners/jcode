@@ -2,8 +2,17 @@ use crate::storage;
 mod lifecycle;
 mod state_support;
 use chrono::{DateTime, NaiveDate, Utc};
+use jcode_usage_types::{
+    AuthEvent, ErrorCounts, FeedbackEvent, InstallEvent, OnboardingStepEvent,
+    SessionLifecycleEvent, SessionStartEvent, TelemetryProjectProfile as ProjectProfile,
+    TelemetryToolCategory as ToolCategory, TelemetryWorkflowCounts, TurnEndEvent, UpgradeEvent,
+    classify_telemetry_tool_category as classify_tool_category,
+    looks_like_telemetry_test_run as looks_like_test_run,
+    mcp_telemetry_server_name as mcp_server_name, sanitize_feedback_text, sanitize_telemetry_label,
+    telemetry_workflow_flags_from_counts,
+};
+pub use jcode_usage_types::{ErrorCategory, SessionEndReason};
 use lifecycle::emit_lifecycle_event;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use state_support::*;
 use std::collections::HashSet;
@@ -15,7 +24,7 @@ const TELEMETRY_ENDPOINT: &str = "https://jcode-telemetry.jeremyhuang55555.worke
 const ASYNC_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const BLOCKING_INSTALL_TIMEOUT: Duration = Duration::from_millis(1200);
 const BLOCKING_LIFECYCLE_TIMEOUT: Duration = Duration::from_millis(800);
-const TELEMETRY_SCHEMA_VERSION: u32 = 4;
+const TELEMETRY_SCHEMA_VERSION: u32 = 5;
 
 static SESSION_STATE: Mutex<Option<SessionTelemetry>> = Mutex::new(None);
 
@@ -26,330 +35,6 @@ static ERROR_MCP_ERROR: AtomicU32 = AtomicU32::new(0);
 static ERROR_RATE_LIMITED: AtomicU32 = AtomicU32::new(0);
 static PROVIDER_SWITCHES: AtomicU32 = AtomicU32::new(0);
 static MODEL_SWITCHES: AtomicU32 = AtomicU32::new(0);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct InstallEvent {
-    event_id: String,
-    id: String,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UpgradeEvent {
-    event_id: String,
-    id: String,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    from_version: String,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AuthEvent {
-    event_id: String,
-    id: String,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    auth_provider: String,
-    auth_method: String,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionStartEvent {
-    event_id: String,
-    id: String,
-    session_id: String,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    provider_start: String,
-    model_start: String,
-    resumed_session: bool,
-    session_start_hour_utc: u32,
-    session_start_weekday_utc: u32,
-    previous_session_gap_secs: Option<u64>,
-    sessions_started_24h: u32,
-    sessions_started_7d: u32,
-    active_sessions_at_start: u32,
-    other_active_sessions_at_start: u32,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OnboardingStepEvent {
-    event_id: String,
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    session_id: Option<String>,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    step: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_method: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_failure_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    milestone_elapsed_ms: Option<u64>,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FeedbackEvent {
-    event_id: String,
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    session_id: Option<String>,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    feedback_rating: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    feedback_reason: Option<String>,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionLifecycleEvent {
-    event_id: String,
-    id: String,
-    session_id: String,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    provider_start: String,
-    provider_end: String,
-    model_start: String,
-    model_end: String,
-    provider_switches: u32,
-    model_switches: u32,
-    duration_mins: u64,
-    duration_secs: u64,
-    turns: u32,
-    had_user_prompt: bool,
-    had_assistant_response: bool,
-    assistant_responses: u32,
-    first_assistant_response_ms: Option<u64>,
-    first_tool_call_ms: Option<u64>,
-    first_tool_success_ms: Option<u64>,
-    first_file_edit_ms: Option<u64>,
-    first_test_pass_ms: Option<u64>,
-    tool_calls: u32,
-    tool_failures: u32,
-    executed_tool_calls: u32,
-    executed_tool_successes: u32,
-    executed_tool_failures: u32,
-    tool_latency_total_ms: u64,
-    tool_latency_max_ms: u64,
-    file_write_calls: u32,
-    tests_run: u32,
-    tests_passed: u32,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_input_tokens: u64,
-    cache_creation_input_tokens: u64,
-    total_tokens: u64,
-    feature_memory_used: bool,
-    feature_swarm_used: bool,
-    feature_web_used: bool,
-    feature_email_used: bool,
-    feature_mcp_used: bool,
-    feature_side_panel_used: bool,
-    feature_goal_used: bool,
-    feature_selfdev_used: bool,
-    feature_background_used: bool,
-    feature_subagent_used: bool,
-    unique_mcp_servers: u32,
-    session_success: bool,
-    abandoned_before_response: bool,
-    transport_https: u32,
-    transport_persistent_ws_fresh: u32,
-    transport_persistent_ws_reuse: u32,
-    transport_cli_subprocess: u32,
-    transport_native_http2: u32,
-    transport_other: u32,
-    tool_cat_read_search: u32,
-    tool_cat_write: u32,
-    tool_cat_shell: u32,
-    tool_cat_web: u32,
-    tool_cat_memory: u32,
-    tool_cat_subagent: u32,
-    tool_cat_swarm: u32,
-    tool_cat_email: u32,
-    tool_cat_side_panel: u32,
-    tool_cat_goal: u32,
-    tool_cat_mcp: u32,
-    tool_cat_other: u32,
-    command_login_used: bool,
-    command_model_used: bool,
-    command_usage_used: bool,
-    command_resume_used: bool,
-    command_memory_used: bool,
-    command_swarm_used: bool,
-    command_goal_used: bool,
-    command_selfdev_used: bool,
-    command_feedback_used: bool,
-    command_other_used: bool,
-    workflow_chat_only: bool,
-    workflow_coding_used: bool,
-    workflow_research_used: bool,
-    workflow_tests_used: bool,
-    workflow_background_used: bool,
-    workflow_subagent_used: bool,
-    workflow_swarm_used: bool,
-    project_repo_present: bool,
-    project_lang_rust: bool,
-    project_lang_js_ts: bool,
-    project_lang_python: bool,
-    project_lang_go: bool,
-    project_lang_markdown: bool,
-    project_lang_mixed: bool,
-    days_since_install: Option<u32>,
-    active_days_7d: u32,
-    active_days_30d: u32,
-    session_start_hour_utc: u32,
-    session_start_weekday_utc: u32,
-    session_end_hour_utc: u32,
-    session_end_weekday_utc: u32,
-    previous_session_gap_secs: Option<u64>,
-    sessions_started_24h: u32,
-    sessions_started_7d: u32,
-    active_sessions_at_start: u32,
-    other_active_sessions_at_start: u32,
-    max_concurrent_sessions: u32,
-    multi_sessioned: bool,
-    resumed_session: bool,
-    end_reason: &'static str,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-    errors: ErrorCounts,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ErrorCounts {
-    provider_timeout: u32,
-    auth_failed: u32,
-    tool_error: u32,
-    mcp_error: u32,
-    rate_limited: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TurnEndEvent {
-    event_id: String,
-    id: String,
-    session_id: String,
-    event: &'static str,
-    version: String,
-    os: &'static str,
-    arch: &'static str,
-    turn_index: u32,
-    turn_started_ms: u64,
-    turn_active_duration_ms: u64,
-    idle_before_turn_ms: Option<u64>,
-    idle_after_turn_ms: u64,
-    assistant_responses: u32,
-    first_assistant_response_ms: Option<u64>,
-    first_tool_call_ms: Option<u64>,
-    first_tool_success_ms: Option<u64>,
-    first_file_edit_ms: Option<u64>,
-    first_test_pass_ms: Option<u64>,
-    tool_calls: u32,
-    tool_failures: u32,
-    executed_tool_calls: u32,
-    executed_tool_successes: u32,
-    executed_tool_failures: u32,
-    tool_latency_total_ms: u64,
-    tool_latency_max_ms: u64,
-    file_write_calls: u32,
-    tests_run: u32,
-    tests_passed: u32,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_input_tokens: u64,
-    cache_creation_input_tokens: u64,
-    total_tokens: u64,
-    feature_memory_used: bool,
-    feature_swarm_used: bool,
-    feature_web_used: bool,
-    feature_email_used: bool,
-    feature_mcp_used: bool,
-    feature_side_panel_used: bool,
-    feature_goal_used: bool,
-    feature_selfdev_used: bool,
-    feature_background_used: bool,
-    feature_subagent_used: bool,
-    unique_mcp_servers: u32,
-    tool_cat_read_search: u32,
-    tool_cat_write: u32,
-    tool_cat_shell: u32,
-    tool_cat_web: u32,
-    tool_cat_memory: u32,
-    tool_cat_subagent: u32,
-    tool_cat_swarm: u32,
-    tool_cat_email: u32,
-    tool_cat_side_panel: u32,
-    tool_cat_goal: u32,
-    tool_cat_mcp: u32,
-    tool_cat_other: u32,
-    workflow_chat_only: bool,
-    workflow_coding_used: bool,
-    workflow_research_used: bool,
-    workflow_tests_used: bool,
-    workflow_background_used: bool,
-    workflow_subagent_used: bool,
-    workflow_swarm_used: bool,
-    turn_success: bool,
-    turn_abandoned: bool,
-    turn_end_reason: &'static str,
-    schema_version: u32,
-    build_channel: String,
-    is_git_checkout: bool,
-    is_ci: bool,
-    ran_from_cargo: bool,
-}
 
 #[derive(Debug, Clone)]
 struct TurnTelemetry {
@@ -411,6 +96,7 @@ struct SessionTelemetry {
     started_at_utc: DateTime<Utc>,
     provider_start: String,
     model_start: String,
+    parent_session_id: Option<String>,
     turns: u32,
     had_user_prompt: bool,
     had_assistant_response: bool,
@@ -452,6 +138,21 @@ struct SessionTelemetry {
     transport_cli_subprocess: u32,
     transport_native_http2: u32,
     transport_other: u32,
+    agent_active_ms_total: u64,
+    agent_model_ms_total: u64,
+    agent_tool_ms_total: u64,
+    session_idle_ms_total: u64,
+    agent_blocked_ms_total: u64,
+    time_to_first_agent_action_ms: Option<u64>,
+    time_to_first_useful_action_ms: Option<u64>,
+    spawned_agent_count: u32,
+    background_task_count: u32,
+    background_task_completed_count: u32,
+    subagent_task_count: u32,
+    subagent_success_count: u32,
+    swarm_task_count: u32,
+    swarm_success_count: u32,
+    user_cancelled_count: u32,
     tool_cat_read_search: u32,
     tool_cat_write: u32,
     tool_cat_shell: u32,
@@ -546,117 +247,10 @@ impl TurnTelemetry {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "workflow flags are derived from collected per-turn and per-session counters"
-)]
-fn workflow_flags_from_counts(
-    had_user_prompt: bool,
-    file_write_calls: u32,
-    tests_run: u32,
-    tests_passed: u32,
-    feature_web_used: bool,
-    feature_background_used: bool,
-    feature_subagent_used: bool,
-    feature_swarm_used: bool,
-    tool_cat_write: u32,
-    tool_cat_web: u32,
-    tool_cat_subagent: u32,
-    tool_cat_swarm: u32,
-) -> (bool, bool, bool, bool, bool, bool, bool) {
-    let workflow_coding_used = file_write_calls > 0 || tool_cat_write > 0;
-    let workflow_research_used = feature_web_used || tool_cat_web > 0;
-    let workflow_tests_used = tests_run > 0 || tests_passed > 0;
-    let workflow_background_used = feature_background_used;
-    let workflow_subagent_used = feature_subagent_used || tool_cat_subagent > 0;
-    let workflow_swarm_used = feature_swarm_used || tool_cat_swarm > 0;
-    let workflow_chat_only = had_user_prompt
-        && !workflow_coding_used
-        && !workflow_research_used
-        && !workflow_tests_used
-        && !workflow_background_used
-        && !workflow_subagent_used
-        && !workflow_swarm_used;
-    (
-        workflow_chat_only,
-        workflow_coding_used,
-        workflow_research_used,
-        workflow_tests_used,
-        workflow_background_used,
-        workflow_subagent_used,
-        workflow_swarm_used,
-    )
-}
-
-#[derive(Debug, Clone, Default)]
-struct ProjectProfile {
-    repo_present: bool,
-    lang_rust: bool,
-    lang_js_ts: bool,
-    lang_python: bool,
-    lang_go: bool,
-    lang_markdown: bool,
-}
-
-impl ProjectProfile {
-    fn mixed(&self) -> bool {
-        [
-            self.lang_rust,
-            self.lang_js_ts,
-            self.lang_python,
-            self.lang_go,
-            self.lang_markdown,
-        ]
-        .into_iter()
-        .filter(|value| *value)
-        .count()
-            > 1
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ToolCategory {
-    ReadSearch,
-    Write,
-    Shell,
-    Web,
-    Memory,
-    Subagent,
-    Swarm,
-    Email,
-    SidePanel,
-    Goal,
-    Mcp,
-    Other,
-}
-
 #[derive(Debug, Clone, Copy)]
 enum DeliveryMode {
     Background,
     Blocking(Duration),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum SessionEndReason {
-    NormalExit,
-    Panic,
-    Signal,
-    Disconnect,
-    Reload,
-    Unknown,
-}
-
-impl SessionEndReason {
-    fn as_str(self) -> &'static str {
-        match self {
-            SessionEndReason::NormalExit => "normal_exit",
-            SessionEndReason::Panic => "panic",
-            SessionEndReason::Signal => "signal",
-            SessionEndReason::Disconnect => "disconnect",
-            SessionEndReason::Reload => "reload",
-            SessionEndReason::Unknown => "unknown",
-        }
-    }
 }
 
 pub fn is_enabled() -> bool {
@@ -753,20 +347,17 @@ pub fn record_setup_step_once(step: &'static str) {
     emit_onboarding_step_once(step, None, None);
 }
 
-pub fn record_feedback(rating: &str, reason: Option<&str>) {
+pub fn record_feedback(text: &str) {
     if !is_enabled() {
         return;
     }
     let Some(id) = get_or_create_id() else {
         return;
     };
-    let normalized_rating = sanitize_telemetry_label(rating).to_ascii_lowercase();
-    if normalized_rating.is_empty() {
+    let feedback_text = sanitize_feedback_text(text);
+    if feedback_text.is_empty() {
         return;
     }
-    let normalized_reason = reason
-        .map(sanitize_telemetry_label)
-        .filter(|value| !value.is_empty());
     let (schema_version, build_channel, git_checkout, ci, from_cargo) = telemetry_envelope();
     let event = FeedbackEvent {
         event_id: new_event_id(),
@@ -776,8 +367,9 @@ pub fn record_feedback(rating: &str, reason: Option<&str>) {
         version: version(),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
-        feedback_rating: normalized_rating,
-        feedback_reason: normalized_reason,
+        feedback_rating: None,
+        feedback_reason: None,
+        feedback_text,
         schema_version,
         build_channel,
         is_git_checkout: git_checkout,
@@ -859,49 +451,19 @@ fn detect_project_profile() -> ProjectProfile {
             continue;
         }
         scanned_files += 1;
-        match entry
-            .path()
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default()
-        {
-            "rs" => profile.lang_rust = true,
-            "js" | "jsx" | "ts" | "tsx" => profile.lang_js_ts = true,
-            "py" => profile.lang_python = true,
-            "go" => profile.lang_go = true,
-            "md" | "mdx" => profile.lang_markdown = true,
-            _ => {}
-        }
+        profile.note_extension(
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default(),
+        );
     }
     profile
 }
 
 fn now_ms_since(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
-}
-
-fn classify_tool_category(name: &str) -> ToolCategory {
-    match name {
-        "read"
-        | "glob"
-        | "grep"
-        | "agentgrep"
-        | "ls"
-        | "conversation_search"
-        | "session_search" => ToolCategory::ReadSearch,
-        "write" | "edit" | "multiedit" | "patch" | "apply_patch" => ToolCategory::Write,
-        "bash" | "bg" => ToolCategory::Shell,
-        "webfetch" | "websearch" | "codesearch" | "open" => ToolCategory::Web,
-        "memory" => ToolCategory::Memory,
-        "subagent" => ToolCategory::Subagent,
-        "communicate" => ToolCategory::Swarm,
-        "gmail" => ToolCategory::Email,
-        "side_panel" => ToolCategory::SidePanel,
-        "goal" => ToolCategory::Goal,
-        "mcp" => ToolCategory::Mcp,
-        other if other.starts_with("mcp__") => ToolCategory::Mcp,
-        _ => ToolCategory::Other,
-    }
 }
 
 fn increment_tool_category(state: &mut SessionTelemetry, category: ToolCategory) {
@@ -946,6 +508,100 @@ fn update_turn_activity_timestamp(turn: &mut TurnTelemetry, now: Instant) {
     if now >= turn.last_activity_at {
         turn.last_activity_at = now;
     }
+}
+
+fn min_optional_ms(values: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
+    values.into_iter().flatten().min()
+}
+
+fn time_to_first_agent_action_ms(state: &SessionTelemetry) -> Option<u64> {
+    min_optional_ms([
+        state.first_assistant_response_ms,
+        state.first_tool_call_ms,
+        state.first_tool_success_ms,
+        state.first_file_edit_ms,
+        state.first_test_pass_ms,
+    ])
+}
+
+fn time_to_first_useful_action_ms(state: &SessionTelemetry) -> Option<u64> {
+    min_optional_ms([
+        state.first_tool_success_ms,
+        state.first_file_edit_ms,
+        state.first_test_pass_ms,
+    ])
+    .or(state.first_assistant_response_ms)
+}
+
+fn infer_agent_role(state: &SessionTelemetry) -> &'static str {
+    if state.feature_swarm_used || state.tool_cat_swarm > 0 {
+        "swarm"
+    } else if state.feature_subagent_used || state.tool_cat_subagent > 0 {
+        "subagent"
+    } else if state.feature_background_used || state.background_task_count > 0 {
+        "background"
+    } else {
+        "foreground"
+    }
+}
+
+fn infer_session_stop_reason(
+    event_name: &'static str,
+    reason: SessionEndReason,
+    state: &SessionTelemetry,
+    errors: &ErrorCounts,
+    duration_secs: u64,
+    session_success: bool,
+    abandoned_before_response: bool,
+    workflow_coding_used: bool,
+) -> &'static str {
+    if event_name == "session_crash"
+        || matches!(reason, SessionEndReason::Panic | SessionEndReason::Signal)
+    {
+        return "crash";
+    }
+    if errors.auth_failed > 0 {
+        return "auth_blocked";
+    }
+    if errors.rate_limited > 0 {
+        return "rate_limited";
+    }
+    if errors.provider_timeout > 0 {
+        return "provider_timeout";
+    }
+    if !state.had_user_prompt {
+        return "never_prompted";
+    }
+    if abandoned_before_response {
+        return "no_first_response";
+    }
+    if state.user_cancelled_count > 0 || matches!(reason, SessionEndReason::Disconnect) {
+        return "user_interrupted";
+    }
+    if matches!(state.first_assistant_response_ms, Some(ms) if ms > 60_000)
+        && time_to_first_useful_action_ms(state).is_none_or(|ms| ms > 60_000)
+    {
+        return "too_slow";
+    }
+    if state.executed_tool_failures >= 3 && state.executed_tool_successes == 0 {
+        return "tool_error_loop";
+    }
+    if errors.tool_error > 0 && state.executed_tool_successes == 0 {
+        return "tool_failures";
+    }
+    if workflow_coding_used && state.file_write_calls == 0 {
+        return "no_file_change";
+    }
+    if state.tests_run > 0 && state.tests_passed == 0 {
+        return "test_failure_unresolved";
+    }
+    if !session_success && duration_secs >= 300 && state.agent_active_ms_total >= 300_000 {
+        return "agent_got_stuck";
+    }
+    if !session_success {
+        return "no_useful_action";
+    }
+    "completed_successfully"
 }
 
 fn mark_command_family_usage(state: &mut SessionTelemetry, command: &str) {
@@ -1126,48 +782,6 @@ pub fn record_command_family(command: &str) {
     maybe_emit_session_start();
 }
 
-fn looks_like_test_run(name: &str, input: &Value) -> bool {
-    let mut haystacks = Vec::new();
-    haystacks.push(name.to_ascii_lowercase());
-
-    if let Some(command) = input.get("command").and_then(Value::as_str) {
-        haystacks.push(command.to_ascii_lowercase());
-    }
-    if let Some(description) = input.get("description").and_then(Value::as_str) {
-        haystacks.push(description.to_ascii_lowercase());
-    }
-    if let Some(task) = input.get("task").and_then(Value::as_str) {
-        haystacks.push(task.to_ascii_lowercase());
-    }
-
-    haystacks.into_iter().any(|value| {
-        value.contains("cargo test")
-            || value.contains("npm test")
-            || value.contains("pnpm test")
-            || value.contains("pytest")
-            || value.contains("jest")
-            || value.contains("vitest")
-            || value.contains("go test")
-            || value.contains("rspec")
-            || value.contains("bun test")
-            || value.contains(" test")
-    })
-}
-
-fn mcp_server_name(name: &str, input: &Value) -> Option<String> {
-    if let Some(rest) = name.strip_prefix("mcp__") {
-        return rest.split("__").next().map(|value| value.to_string());
-    }
-    if name == "mcp" {
-        return input
-            .get("server")
-            .and_then(Value::as_str)
-            .map(sanitize_telemetry_label)
-            .filter(|value| !value.is_empty());
-    }
-    None
-}
-
 fn post_payload(payload: serde_json::Value, timeout: Duration) -> bool {
     let client = match reqwest::blocking::Client::builder()
         .timeout(timeout)
@@ -1222,30 +836,6 @@ fn current_error_counts() -> ErrorCounts {
         mcp_error: ERROR_MCP_ERROR.load(Ordering::Relaxed),
         rate_limited: ERROR_RATE_LIMITED.load(Ordering::Relaxed),
     }
-}
-
-fn sanitize_telemetry_label(value: &str) -> String {
-    let mut cleaned = String::with_capacity(value.len());
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if matches!(chars.peek(), Some('[')) {
-                let _ = chars.next();
-                for next in chars.by_ref() {
-                    if ('@'..='~').contains(&next) {
-                        break;
-                    }
-                }
-                continue;
-            }
-            continue;
-        }
-        if ch.is_control() {
-            continue;
-        }
-        cleaned.push(ch);
-    }
-    cleaned.trim().to_string()
 }
 
 fn has_any_errors(errors: &ErrorCounts) -> bool {
@@ -1304,34 +894,47 @@ fn finalize_current_turn(
         .checked_duration_since(turn.started_at)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0);
+    state.agent_active_ms_total = state
+        .agent_active_ms_total
+        .saturating_add(turn_active_duration_ms);
+    state.agent_tool_ms_total = state
+        .agent_tool_ms_total
+        .saturating_add(turn.tool_latency_total_ms);
+    state.agent_model_ms_total = state.agent_model_ms_total.saturating_add(
+        turn_active_duration_ms
+            .saturating_sub(turn.tool_latency_total_ms.min(turn_active_duration_ms)),
+    );
+    state.session_idle_ms_total = state
+        .session_idle_ms_total
+        .saturating_add(idle_after_turn_ms)
+        .saturating_add(turn.idle_before_turn_ms.unwrap_or(0));
     let turn_success = turn.assistant_responses > 0
         || turn.executed_tool_successes > 0
         || turn.tests_passed > 0
         || turn.file_write_calls > 0;
     let turn_abandoned =
         !turn_success && turn.tool_failures == 0 && turn.executed_tool_failures == 0;
-    let (
-        workflow_chat_only,
-        workflow_coding_used,
-        workflow_research_used,
-        workflow_tests_used,
-        workflow_background_used,
-        workflow_subagent_used,
-        workflow_swarm_used,
-    ) = workflow_flags_from_counts(
-        true,
-        turn.file_write_calls,
-        turn.tests_run,
-        turn.tests_passed,
-        turn.feature_web_used,
-        turn.feature_background_used,
-        turn.feature_subagent_used,
-        turn.feature_swarm_used,
-        turn.tool_cat_write,
-        turn.tool_cat_web,
-        turn.tool_cat_subagent,
-        turn.tool_cat_swarm,
-    );
+    let workflow_flags = telemetry_workflow_flags_from_counts(TelemetryWorkflowCounts {
+        had_user_prompt: true,
+        file_write_calls: turn.file_write_calls,
+        tests_run: turn.tests_run,
+        tests_passed: turn.tests_passed,
+        feature_web_used: turn.feature_web_used,
+        feature_background_used: turn.feature_background_used,
+        feature_subagent_used: turn.feature_subagent_used,
+        feature_swarm_used: turn.feature_swarm_used,
+        tool_cat_write: turn.tool_cat_write,
+        tool_cat_web: turn.tool_cat_web,
+        tool_cat_subagent: turn.tool_cat_subagent,
+        tool_cat_swarm: turn.tool_cat_swarm,
+    });
+    let workflow_chat_only = workflow_flags.chat_only;
+    let workflow_coding_used = workflow_flags.coding_used;
+    let workflow_research_used = workflow_flags.research_used;
+    let workflow_tests_used = workflow_flags.tests_used;
+    let workflow_background_used = workflow_flags.background_used;
+    let workflow_subagent_used = workflow_flags.subagent_used;
+    let workflow_swarm_used = workflow_flags.swarm_used;
     let (schema_version, build_channel, git_checkout, ci, from_cargo) = telemetry_envelope();
     let event = TurnEndEvent {
         event_id: new_event_id(),
@@ -1630,14 +1233,28 @@ pub fn record_auth_success(provider: &str, method: &str) {
 }
 
 pub fn begin_session(provider: &str, model: &str) {
-    begin_session_with_mode(provider, model, false);
+    begin_session_with_parent(provider, model, None, false);
+}
+
+pub fn begin_session_with_parent(
+    provider: &str,
+    model: &str,
+    parent_session_id: Option<String>,
+    resumed_session: bool,
+) {
+    begin_session_with_mode(provider, model, parent_session_id, resumed_session);
 }
 
 pub fn begin_resumed_session(provider: &str, model: &str) {
-    begin_session_with_mode(provider, model, true);
+    begin_session_with_mode(provider, model, None, true);
 }
 
-fn begin_session_with_mode(provider: &str, model: &str, resumed_session: bool) {
+fn begin_session_with_mode(
+    provider: &str,
+    model: &str,
+    parent_session_id: Option<String>,
+    resumed_session: bool,
+) {
     if !is_enabled() {
         return;
     }
@@ -1655,6 +1272,7 @@ fn begin_session_with_mode(provider: &str, model: &str, resumed_session: bool) {
         started_at_utc,
         provider_start: sanitize_telemetry_label(provider),
         model_start: sanitize_telemetry_label(model),
+        parent_session_id,
         turns: 0,
         had_user_prompt: false,
         had_assistant_response: false,
@@ -1696,6 +1314,21 @@ fn begin_session_with_mode(provider: &str, model: &str, resumed_session: bool) {
         transport_cli_subprocess: 0,
         transport_native_http2: 0,
         transport_other: 0,
+        agent_active_ms_total: 0,
+        agent_model_ms_total: 0,
+        agent_tool_ms_total: 0,
+        session_idle_ms_total: 0,
+        agent_blocked_ms_total: 0,
+        time_to_first_agent_action_ms: None,
+        time_to_first_useful_action_ms: None,
+        spawned_agent_count: 0,
+        background_task_count: 0,
+        background_task_completed_count: 0,
+        subagent_task_count: 0,
+        subagent_success_count: 0,
+        swarm_task_count: 0,
+        swarm_success_count: 0,
+        user_cancelled_count: 0,
         tool_cat_read_search: 0,
         tool_cat_write: 0,
         tool_cat_shell: 0,
@@ -1959,6 +1592,19 @@ pub fn record_model_switch() {
     maybe_emit_session_start();
 }
 
+pub fn record_user_cancelled() {
+    if let Ok(mut guard) = SESSION_STATE.lock()
+        && let Some(ref mut state) = *guard
+    {
+        observe_session_concurrency(state);
+        state.user_cancelled_count = state.user_cancelled_count.saturating_add(1);
+        if let Some(turn) = state.current_turn.as_mut() {
+            update_turn_activity_timestamp(turn, Instant::now());
+        }
+    }
+    maybe_emit_session_start();
+}
+
 pub fn record_tool_execution(name: &str, input: &Value, succeeded: bool, latency_ms: u64) {
     if let Ok(mut guard) = SESSION_STATE.lock()
         && let Some(ref mut state) = *guard
@@ -1974,6 +1620,38 @@ pub fn record_tool_execution(name: &str, input: &Value, succeeded: bool, latency
             turn.tool_latency_max_ms = turn.tool_latency_max_ms.max(latency_ms);
             update_turn_activity_timestamp(turn, now);
         }
+        match classify_tool_category(name) {
+            ToolCategory::Subagent => {
+                state.subagent_task_count = state.subagent_task_count.saturating_add(1);
+                if succeeded {
+                    state.subagent_success_count = state.subagent_success_count.saturating_add(1);
+                }
+            }
+            ToolCategory::Swarm => {
+                state.swarm_task_count = state.swarm_task_count.saturating_add(1);
+                if succeeded {
+                    state.swarm_success_count = state.swarm_success_count.saturating_add(1);
+                }
+            }
+            ToolCategory::Shell
+                if matches!(name, "bg" | "schedule")
+                    || input
+                        .get("run_in_background")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false) =>
+            {
+                state.background_task_count = state.background_task_count.saturating_add(1);
+                if succeeded {
+                    state.background_task_completed_count =
+                        state.background_task_completed_count.saturating_add(1);
+                }
+            }
+            _ => {}
+        }
+        state.spawned_agent_count = state
+            .background_task_count
+            .saturating_add(state.subagent_task_count)
+            .saturating_add(state.swarm_task_count);
         mark_tool_feature_usage(state, name, input);
         if succeeded {
             state.executed_tool_successes += 1;
@@ -2018,15 +1696,6 @@ pub fn current_provider_model() -> Option<(String, String)> {
             .as_ref()
             .map(|state| (state.provider_start.clone(), state.model_start.clone()))
     })
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ErrorCategory {
-    ProviderTimeout,
-    AuthFailed,
-    ToolError,
-    McpError,
-    RateLimited,
 }
 
 fn show_first_run_notice() {

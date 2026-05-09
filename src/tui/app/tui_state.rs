@@ -112,12 +112,12 @@ impl App {
     }
 
     fn widget_route_info(&self, model: Option<&str>) -> WidgetRouteInfo {
-        let remote_provider_name = if self.is_remote || self.is_replay {
+        let remote_provider_name = if self.uses_server_or_replay_metadata() {
             self.remote_header_provider_name()
         } else {
             None
         };
-        let provider_name = if self.is_remote || self.is_replay {
+        let provider_name = if self.uses_server_or_replay_metadata() {
             remote_provider_name.as_deref()
         } else {
             Some(self.provider.name())
@@ -133,7 +133,7 @@ impl App {
 
         WidgetRouteInfo {
             provider,
-            is_remote: self.is_remote || self.is_replay,
+            is_remote: self.uses_server_or_replay_metadata(),
         }
     }
 
@@ -469,7 +469,7 @@ impl crate::tui::TuiState for App {
 
     fn total_session_tokens(&self) -> Option<(u64, u64)> {
         // In remote mode, use tokens from server
-        // Standalone mode doesn't currently track total tokens
+        // Independent mode doesn't currently track total tokens
         self.remote_total_tokens
     }
 
@@ -543,6 +543,15 @@ impl crate::tui::TuiState for App {
     }
 
     fn status_notice(&self) -> Option<String> {
+        if !self.is_remote
+            && self.provider.uses_jcode_compaction()
+            && let Ok(manager) = self.registry.compaction().try_read()
+            && manager.is_compacting()
+        {
+            return Some(Self::format_compaction_progress_notice(
+                self.app_started.elapsed(),
+            ));
+        }
         self.status_notice.as_ref().and_then(|(text, at)| {
             if at.elapsed() <= Duration::from_secs(3) {
                 Some(text.clone())
@@ -826,7 +835,7 @@ impl crate::tui::TuiState for App {
             service_tier,
             native_compaction_mode,
             native_compaction_threshold_tokens,
-        ) = if self.is_remote || self.is_replay {
+        ) = if self.uses_server_or_replay_metadata() {
             (
                 self.remote_provider_model.clone(),
                 self.remote_reasoning_effort.clone(),
@@ -903,6 +912,9 @@ impl crate::tui::TuiState for App {
                     ProcessingStatus::Thinking(_) => ("thinking".to_string(), None),
                     ProcessingStatus::Streaming => {
                         ("running".to_string(), Some("streaming".to_string()))
+                    }
+                    ProcessingStatus::WaitingForNetwork { listener } => {
+                        ("waiting_network".to_string(), Some(listener.clone()))
                     }
                     ProcessingStatus::RunningTool(name) => {
                         ("running".to_string(), Some(format!("tool: {}", name)))
@@ -1040,7 +1052,7 @@ impl crate::tui::TuiState for App {
             background_info,
             usage_info,
             tokens_per_second,
-            provider_name: if self.is_remote || self.is_replay {
+            provider_name: if self.uses_server_or_replay_metadata() {
                 self.remote_provider_name
                     .clone()
                     .or_else(|| Some(self.provider.name().to_string()))
@@ -1142,6 +1154,9 @@ impl crate::tui::TuiState for App {
     }
     fn diff_pane_scroll_x(&self) -> i32 {
         self.diff_pane_scroll_x
+    }
+    fn side_panel_image_zoom_percent(&self) -> u8 {
+        self.side_panel_image_zoom_percent
     }
     fn diff_pane_focus(&self) -> bool {
         self.diff_pane_focus

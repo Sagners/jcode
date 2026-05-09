@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::net::ToSocketAddrs;
 
-use crate::{browser, gateway, memory, storage, tui};
+use crate::{browser, gateway, memory, session, storage, tui};
 
 use super::terminal::{cleanup_tui_runtime, init_tui_runtime};
 
@@ -91,6 +91,59 @@ pub async fn run_dictate_command(type_output: bool) -> Result<()> {
     } else {
         run_transcript_command(Some(run.text), run.mode, None).await
     }
+}
+
+#[derive(Serialize)]
+struct SessionRenameOutput {
+    session_id: String,
+    display_name: String,
+    title: Option<String>,
+    cleared: bool,
+}
+
+pub fn run_session_rename_command(
+    session_ref: &str,
+    name: Option<&str>,
+    clear: bool,
+    json: bool,
+) -> Result<()> {
+    let resolved_id = session::find_session_by_name_or_id(session_ref)?;
+    let mut session = session::Session::load(&resolved_id)?;
+
+    if clear {
+        session.rename_title(None);
+    } else {
+        let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) else {
+            anyhow::bail!("Provide a session name or use --clear");
+        };
+        session.rename_title(Some(name.to_string()));
+    }
+
+    session.save()?;
+    crate::tui::session_picker::invalidate_session_list_cache();
+
+    let output = SessionRenameOutput {
+        session_id: session.id.clone(),
+        display_name: session.display_name().to_string(),
+        title: session.display_title().map(ToOwned::to_owned),
+        cleared: clear,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if clear {
+        println!(
+            "Cleared custom name for session {} ({}).",
+            output.display_name, output.session_id
+        );
+    } else if let Some(title) = output.title.as_deref() {
+        println!(
+            "Renamed session {} ({}) to \"{}\".",
+            output.display_name, output.session_id, title
+        );
+    }
+
+    Ok(())
 }
 
 async fn run_ambient_visible() -> Result<()> {
@@ -443,8 +496,13 @@ pub fn run_pair_command(list: bool, revoke: Option<String>) -> Result<()> {
 
     eprintln!();
     eprintln!("  \x1b[1mScan with the jcode iOS app:\x1b[0m\n");
-    if qr2term::print_qr(&pair_uri).is_err() {
-        eprintln!("  \x1b[33m(QR code generation failed)\x1b[0m\n");
+    match crate::login_qr::render_unicode_qr(&pair_uri) {
+        Ok(qr) => {
+            for line in qr.lines() {
+                eprintln!("  {line}");
+            }
+        }
+        Err(_) => eprintln!("  \x1b[33m(QR code generation failed)\x1b[0m"),
     }
     eprintln!();
     eprintln!(
@@ -602,6 +660,15 @@ struct ModelListReport {
     provider: String,
     selected_model: String,
     models: Vec<String>,
+    routes: Vec<ModelListRouteReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ModelListRouteReport {
+    provider: String,
+    model: String,
+    method: String,
+    available: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -674,7 +741,7 @@ pub async fn run_single_message_command(
     restore_agent_session_if_requested(&mut agent, resume_session)?;
 
     if emit_json {
-        let text = agent.run_once_capture(message).await?;
+        let text = run_single_message_command_capture_with_auto_poke(&mut agent, message).await?;
         let report = RunCommandReport {
             session_id: agent.session_id().to_string(),
             provider: provider.name().to_string(),
@@ -686,10 +753,116 @@ pub async fn run_single_message_command(
     } else if emit_ndjson {
         run_single_message_command_ndjson(&mut agent, provider.clone(), message).await?;
     } else {
-        agent.run_once(message).await?;
+        run_single_message_command_plain_with_auto_poke(&mut agent, message).await?;
     }
 
     Ok(())
+}
+
+fn run_command_auto_poke_enabled() -> bool {
+    std::env::var("JCODE_RUN_AUTO_POKE")
+        .ok()
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            !matches!(value.as_str(), "0" | "false" | "off" | "no")
+        })
+        .unwrap_or(true)
+}
+
+fn run_command_auto_poke_max_turns() -> Option<usize> {
+    std::env::var("JCODE_RUN_AUTO_POKE_MAX_TURNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn run_command_auto_poke_limit_reached(turns_completed: usize, max_turns: Option<usize>) -> bool {
+    max_turns
+        .map(|max_turns| turns_completed >= max_turns)
+        .unwrap_or(false)
+}
+
+fn incomplete_run_todos(session_id: &str) -> Vec<crate::todo::TodoItem> {
+    crate::todo::load_todos(session_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|todo| todo.status != "completed" && todo.status != "cancelled")
+        .collect()
+}
+
+fn build_run_poke_message(incomplete: &[crate::todo::TodoItem]) -> String {
+    format!(
+        "You have {} incomplete todo{}. Continue working, or update the todo tool.",
+        incomplete.len(),
+        if incomplete.len() == 1 { "" } else { "s" },
+    )
+}
+
+async fn run_single_message_command_plain_with_auto_poke(
+    agent: &mut crate::agent::Agent,
+    message: &str,
+) -> Result<()> {
+    let mut next_message = message.to_string();
+    let max_turns = run_command_auto_poke_max_turns();
+    let mut turns_completed = 0usize;
+    loop {
+        agent.run_once(&next_message).await?;
+        turns_completed += 1;
+        if !run_command_auto_poke_enabled() {
+            break;
+        }
+        let incomplete = incomplete_run_todos(agent.session_id());
+        if incomplete.is_empty() {
+            break;
+        }
+        if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
+            if let Some(max_turns) = max_turns {
+                eprintln!(
+                    "Auto-poke stopped after {max_turns} turn(s) with {} incomplete todo(s).",
+                    incomplete.len()
+                );
+            }
+            break;
+        }
+        next_message = build_run_poke_message(&incomplete);
+        eprintln!(
+            "Auto-poking: {} incomplete todo(s). Set JCODE_RUN_AUTO_POKE=0 to disable.",
+            incomplete.len()
+        );
+    }
+    Ok(())
+}
+
+async fn run_single_message_command_capture_with_auto_poke(
+    agent: &mut crate::agent::Agent,
+    message: &str,
+) -> Result<String> {
+    let mut next_message = message.to_string();
+    let max_turns = run_command_auto_poke_max_turns();
+    let mut outputs = Vec::new();
+    let mut turns_completed = 0usize;
+    loop {
+        outputs.push(agent.run_once_capture(&next_message).await?);
+        turns_completed += 1;
+        if !run_command_auto_poke_enabled() {
+            break;
+        }
+        let incomplete = incomplete_run_todos(agent.session_id());
+        if incomplete.is_empty() {
+            break;
+        }
+        if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
+            if let Some(max_turns) = max_turns {
+                outputs.push(format!(
+                    "Auto-poke stopped after {max_turns} turn(s) with {} incomplete todo(s).",
+                    incomplete.len()
+                ));
+            }
+            break;
+        }
+        next_message = build_run_poke_message(&incomplete);
+    }
+    Ok(outputs.join("\n\n"))
 }
 
 fn restore_agent_session_if_requested(
@@ -709,8 +882,6 @@ async fn run_single_message_command_ndjson(
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = agent.session_id().to_string();
-    let mut run_future =
-        std::pin::pin!(agent.run_once_streaming_mpsc(message, Vec::new(), None, event_tx,));
     let mut stdout = std::io::stdout().lock();
     let mut state = NdjsonRunState {
         session_id: Some(session_id.clone()),
@@ -726,22 +897,79 @@ async fn run_single_message_command_ndjson(
         }),
     )?;
 
-    let mut run_result: Option<Result<()>> = None;
+    let max_turns = run_command_auto_poke_max_turns();
+    let mut next_message = message.to_string();
+    let mut result: Result<()> = Ok(());
+    let mut turns_completed = 0usize;
     loop {
-        tokio::select! {
-            result = &mut run_future, if run_result.is_none() => {
-                run_result = Some(result);
-            }
-            event = event_rx.recv() => {
-                match event {
-                    Some(event) => emit_ndjson_event(&mut stdout, &mut state, event)?,
-                    None => break,
+        let turn_result = {
+            let mut run_future = std::pin::pin!(agent.run_once_streaming_mpsc(
+                &next_message,
+                Vec::new(),
+                None,
+                event_tx.clone(),
+            ));
+            let mut run_result: Option<Result<()>> = None;
+            loop {
+                tokio::select! {
+                    result = &mut run_future, if run_result.is_none() => {
+                        run_result = Some(result);
+                    }
+                    event = event_rx.recv() => {
+                        match event {
+                            Some(event) => emit_ndjson_event(&mut stdout, &mut state, event)?,
+                            None => break,
+                        }
+                    }
+                }
+                if run_result.is_some() {
+                    while let Ok(event) = event_rx.try_recv() {
+                        emit_ndjson_event(&mut stdout, &mut state, event)?;
+                    }
+                    break;
                 }
             }
+            run_result.unwrap_or(Ok(()))
+        };
+
+        if let Err(err) = turn_result {
+            result = Err(err);
+            break;
         }
+        turns_completed += 1;
+        if !run_command_auto_poke_enabled() {
+            break;
+        }
+        let incomplete = incomplete_run_todos(&session_id);
+        if incomplete.is_empty() {
+            break;
+        }
+        if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
+            if let Some(max_turns) = max_turns {
+                write_json_line(
+                    &mut stdout,
+                    &serde_json::json!({
+                        "type": "auto_poke_stopped",
+                        "session_id": session_id,
+                        "incomplete_todos": incomplete.len(),
+                        "max_turns": max_turns,
+                    }),
+                )?;
+            }
+            break;
+        }
+        next_message = build_run_poke_message(&incomplete);
+        write_json_line(
+            &mut stdout,
+            &serde_json::json!({
+                "type": "auto_poke",
+                "session_id": session_id,
+                "incomplete_todos": incomplete.len(),
+                "message": next_message,
+            }),
+        )?;
     }
 
-    let result = run_result.unwrap_or(Ok(()));
     match result {
         Ok(()) => {
             write_json_line(
@@ -987,7 +1215,12 @@ pub async fn run_model_command(
     }
 
     let routes = provider.model_routes();
-    let models = collect_cli_model_names(&routes, provider.available_models_display());
+    let filtered_routes = filter_cli_model_routes_for_choice(choice, &routes);
+    let models = if filtered_routes.len() == routes.len() {
+        collect_cli_model_names(&routes, provider.available_models_display())
+    } else {
+        collect_cli_model_names(&filtered_routes, Vec::new())
+    };
 
     if models.is_empty() {
         anyhow::bail!(
@@ -997,10 +1230,24 @@ pub async fn run_model_command(
     }
 
     if emit_json {
+        let provider_label = super::provider_init::login_provider_for_choice(choice)
+            .map(|provider| provider.display_name.to_string())
+            .unwrap_or_else(|| {
+                crate::provider_catalog::runtime_provider_display_name(provider.name())
+            });
         let report = ModelListReport {
-            provider: crate::provider_catalog::runtime_provider_display_name(provider.name()),
+            provider: provider_label,
             selected_model: provider.model(),
             models,
+            routes: filtered_routes
+                .iter()
+                .map(|route| ModelListRouteReport {
+                    provider: cli_route_provider_display(&route.provider, &route.api_method),
+                    model: route.model.clone(),
+                    method: cli_api_method_display(&route.api_method).to_string(),
+                    available: route.available,
+                })
+                .collect(),
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -1019,6 +1266,26 @@ pub async fn run_model_command(
     }
 
     Ok(())
+}
+
+fn cli_api_method_display(raw: &str) -> &str {
+    match raw {
+        "claude-oauth" | "openai-oauth" | "code-assist-oauth" => "oauth",
+        "api-key" | "openai-api-key" => "api key",
+        method if method.starts_with("openai-compatible") => "api key",
+        method => method
+            .split_once(':')
+            .map(|(method, _)| method)
+            .unwrap_or(method),
+    }
+}
+
+fn cli_route_provider_display(provider: &str, api_method: &str) -> String {
+    if api_method == "openrouter" && provider != "auto" && !provider.contains("OpenRouter") {
+        format!("OpenRouter/{}", provider)
+    } else {
+        provider.to_string()
+    }
 }
 
 fn collect_cli_model_names(
@@ -1053,6 +1320,32 @@ fn collect_cli_model_names(
     }
 
     deduped
+}
+
+#[allow(deprecated)]
+fn filter_cli_model_routes_for_choice(
+    choice: &super::provider_init::ProviderChoice,
+    routes: &[crate::provider::ModelRoute],
+) -> Vec<crate::provider::ModelRoute> {
+    use super::provider_init::ProviderChoice;
+
+    let keep = |route: &&crate::provider::ModelRoute| match choice {
+        ProviderChoice::Claude | ProviderChoice::ClaudeSubprocess => {
+            route.api_method == "claude-oauth" || route.api_method == "api-key"
+        }
+        ProviderChoice::Openai => route.api_method == "openai-oauth",
+        ProviderChoice::OpenaiApi => route.api_method == "openai-api-key",
+        ProviderChoice::Openrouter | ProviderChoice::Azure => route.api_method == "openrouter",
+        ProviderChoice::Copilot => route.api_method == "copilot",
+        _ => true,
+    };
+
+    let filtered: Vec<_> = routes.iter().filter(keep).cloned().collect();
+    if filtered.is_empty() {
+        routes.to_vec()
+    } else {
+        filtered
+    }
 }
 #[cfg(test)]
 #[path = "commands_tests.rs"]

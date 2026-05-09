@@ -151,6 +151,7 @@ struct ScriptableAuthSuccess {
     email: Option<String>,
 }
 
+#[allow(deprecated)]
 pub async fn run_login(
     choice: &ProviderChoice,
     account_label: Option<&str>,
@@ -249,8 +250,14 @@ pub async fn run_login_provider(
             LoginProviderTarget::OpenAi => login_openai_flow(account_label, options.no_browser)
                 .await
                 .map(|_| LoginFlowOutcome::Completed),
+            LoginProviderTarget::OpenAiApiKey => {
+                login_openai_api_key_flow().map(|_| LoginFlowOutcome::Completed)
+            }
             LoginProviderTarget::OpenRouter => {
                 login_openrouter_flow().map(|_| LoginFlowOutcome::Completed)
+            }
+            LoginProviderTarget::Bedrock => {
+                login_bedrock_flow().map(|_| LoginFlowOutcome::Completed)
             }
             LoginProviderTarget::Azure => login_azure_flow().map(|_| LoginFlowOutcome::Completed),
             LoginProviderTarget::OpenAiCompatible(profile) => {
@@ -327,7 +334,9 @@ fn maybe_persist_default_provider_after_login(
     let provider_id = match provider.target {
         LoginProviderTarget::Claude => Some("claude"),
         LoginProviderTarget::OpenAi => Some("openai"),
+        LoginProviderTarget::OpenAiApiKey => Some("openai-api"),
         LoginProviderTarget::OpenRouter => Some("openrouter"),
+        LoginProviderTarget::Bedrock => Some("bedrock"),
         LoginProviderTarget::OpenAiCompatible(profile) => Some(profile.id),
         LoginProviderTarget::Cursor => Some("cursor"),
         LoginProviderTarget::Copilot => Some("copilot"),
@@ -429,6 +438,33 @@ fn login_jcode_flow() -> Result<()> {
     Ok(())
 }
 
+fn login_openai_api_key_flow() -> Result<()> {
+    eprintln!("Setting up OpenAI API key...");
+    eprintln!("Get your API key from: https://platform.openai.com/api-keys\n");
+    eprint!("Paste your OpenAI API key: ");
+    io::stdout().flush()?;
+
+    let key = read_secret_line()?;
+    if key.is_empty() {
+        anyhow::bail!("No API key provided.");
+    }
+    if !key.starts_with("sk-") {
+        eprintln!("Warning: OpenAI API keys usually start with 'sk-'. Saving anyway.");
+    }
+
+    save_named_api_key("openai.env", "OPENAI_API_KEY", &key)?;
+    eprintln!("\nSuccessfully saved OpenAI API key!");
+    eprintln!(
+        "Stored at {}",
+        crate::storage::app_config_dir()?
+            .join("openai.env")
+            .display()
+    );
+    eprintln!("Provider: openai-api (native OpenAI Responses API)");
+    crate::telemetry::record_auth_success("openai-api", "api_key");
+    Ok(())
+}
+
 async fn login_claude_flow(requested_label: Option<&str>, no_browser: bool) -> Result<()> {
     let label = auth::claude::login_target_label(requested_label)?;
     eprintln!("Logging in to Claude (account: {})...", label);
@@ -499,6 +535,51 @@ fn login_openrouter_flow() -> Result<()> {
             .display()
     );
     crate::telemetry::record_auth_success("openrouter", "api_key");
+    Ok(())
+}
+
+fn login_bedrock_flow() -> Result<()> {
+    eprintln!("Setting up AWS Bedrock...");
+    eprintln!(
+        "Generate a Bedrock API key in the AWS Bedrock console: https://console.aws.amazon.com/bedrock/home#/api-keys"
+    );
+    eprintln!("Short-term keys are recommended for onboarding/testing.\n");
+
+    let region = read_line_trimmed("AWS region [us-east-2]: ")?;
+    let region = if region.trim().is_empty() {
+        "us-east-2".to_string()
+    } else {
+        region.trim().to_string()
+    };
+
+    eprint!("Paste your Bedrock API key: ");
+    io::stdout().flush()?;
+    let key = read_secret_line()?;
+    if key.is_empty() {
+        anyhow::bail!("No API key provided.");
+    }
+
+    save_named_api_key(
+        crate::provider::bedrock::ENV_FILE,
+        crate::provider::bedrock::API_KEY_ENV,
+        &key,
+    )?;
+    crate::provider_catalog::save_env_value_to_env_file(
+        crate::provider::bedrock::REGION_ENV,
+        crate::provider::bedrock::ENV_FILE,
+        Some(&region),
+    )?;
+
+    eprintln!("\nSuccessfully saved AWS Bedrock API key!");
+    eprintln!(
+        "Stored at {}",
+        crate::storage::app_config_dir()?
+            .join(crate::provider::bedrock::ENV_FILE)
+            .display()
+    );
+    eprintln!("Region: {}", region);
+    eprintln!("Provider: bedrock (native AWS Bedrock Converse API)");
+    crate::telemetry::record_auth_success("bedrock", "api_key");
     Ok(())
 }
 
@@ -836,27 +917,7 @@ fn save_named_env_vars(env_file: &str, vars: &[(&str, String)]) -> Result<()> {
 }
 
 fn login_cursor_flow() -> Result<()> {
-    eprintln!("Starting Cursor login...");
-    let binary = crate::auth::cursor::cursor_agent_cli_path();
-
-    if crate::auth::cursor::has_cursor_agent_cli() {
-        match crate::auth::login_flows::run_external_login_command(&binary, &["login"]) {
-            Ok(()) => {
-                eprintln!("Cursor login command completed.");
-                crate::telemetry::record_auth_success("cursor", "oauth");
-                crate::auth::AuthStatus::invalidate_cache();
-                return Ok(());
-            }
-            Err(err) => {
-                eprintln!("Cursor browser login failed: {}", err);
-                eprintln!();
-                eprintln!("Falling back to Cursor API key setup.");
-            }
-        }
-    } else {
-        eprintln!("Cursor Agent CLI was not found on PATH.");
-        eprintln!("You can still save a Cursor API key now and install Cursor Agent later.");
-    }
+    eprintln!("Starting Cursor API key setup...");
 
     eprintln!("Get your API key from: https://cursor.com/settings");
     eprintln!("(Dashboard > Integrations > User API Keys)\n");
@@ -877,12 +938,7 @@ fn login_cursor_flow() -> Result<()> {
             .join("cursor.env")
             .display()
     );
-    eprintln!("jcode will pass it to `cursor-agent` automatically.");
-    if !crate::auth::cursor::has_cursor_agent_cli() {
-        eprintln!("Install Cursor Agent to use the Cursor provider:");
-        eprintln!("  - macOS/Linux/WSL: curl https://cursor.com/install -fsS | bash");
-        eprintln!("  - Windows (PowerShell): irm 'https://cursor.com/install?win32=true' | iex");
-    }
+    eprintln!("jcode will use the native Cursor HTTPS transport.");
     crate::telemetry::record_auth_success("cursor", "api_key");
     Ok(())
 }

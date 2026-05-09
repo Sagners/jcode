@@ -204,9 +204,13 @@ impl App {
             crate::provider_catalog::LoginProviderTarget::Jcode => self.start_jcode_login(),
             crate::provider_catalog::LoginProviderTarget::Claude => self.start_claude_login(),
             crate::provider_catalog::LoginProviderTarget::OpenAi => self.start_openai_login(),
+            crate::provider_catalog::LoginProviderTarget::OpenAiApiKey => {
+                self.start_openai_api_key_login()
+            }
             crate::provider_catalog::LoginProviderTarget::OpenRouter => {
                 self.start_openrouter_login()
             }
+            crate::provider_catalog::LoginProviderTarget::Bedrock => self.start_bedrock_login(),
             crate::provider_catalog::LoginProviderTarget::Azure => {
                 crate::telemetry::record_auth_surface_blocked(
                     provider.id,
@@ -256,9 +260,9 @@ impl App {
         self.push_display_message(DisplayMessage::system(
             "**Jcode Subscription Login**\n\n\
              This doesn't exist yet.\n\n\
-             This would be a managed API key for a curated list of models chosen for good compatibility with jcode. It would be net-zero profit: your dollars would go toward tokens as much as possible. This subscription would be required for the mobile app version.\n\n\
-             Jcode currently has no way of making money. Net-zero profit may change in the distant future if jcode reaches a scale where it can be profitable while still subsidizing token costs.\n\n\
-             If you are interested in this, please tell Jeremy."
+             This would be a jcode subscription for a curated list of models chosen for good compatibility with jcode. It would work similarly to OpenRouter, but jcode would pick the best model/provider routes by balancing price, performance, KV cache support, latency, and throughput. Right now, the model of choice would be DeepSeek V4 Pro.\n\n\
+             The goal would be to maximize the amount of token usage you get for your subscription. The plan is to stay around zero profit until jcode can beat raw API prices while providing some level of competitive subsidization. This subscription would be required for the mobile app version.\n\n\
+             If you are interested in this, please send feedback letting me know."
                 .to_string(),
         ));
         self.set_status_notice("Login: jcode unavailable");
@@ -807,6 +811,34 @@ impl App {
         );
     }
 
+    fn start_bedrock_login(&mut self) {
+        self.start_api_key_login(
+            "AWS Bedrock",
+            "https://console.aws.amazon.com/bedrock/home#/api-keys",
+            crate::provider::bedrock::ENV_FILE,
+            crate::provider::bedrock::API_KEY_ENV,
+            Some("us.amazon.nova-micro-v1:0"),
+            Some(
+                "Region: us-east-2 (default for TUI onboarding; use CLI login for another region)",
+            ),
+            false,
+            None,
+        );
+    }
+
+    fn start_openai_api_key_login(&mut self) {
+        self.start_api_key_login(
+            "OpenAI API",
+            "https://platform.openai.com/api-keys",
+            "openai.env",
+            "OPENAI_API_KEY",
+            Some("gpt-5.5"),
+            Some("https://api.openai.com/v1"),
+            false,
+            None,
+        );
+    }
+
     fn start_openai_compatible_profile_login(
         &mut self,
         profile: crate::provider_catalog::OpenAiCompatibleProfile,
@@ -922,55 +954,13 @@ impl App {
     }
 
     fn start_cursor_login(&mut self) {
-        let binary = crate::auth::cursor::cursor_agent_cli_path();
-
-        crate::telemetry::record_auth_started("cursor", "cli");
-
-        if crate::auth::cursor::has_cursor_agent_cli() {
-            self.push_display_message(DisplayMessage::system(format!(
-                "**Cursor Login**\n\n\
-                 Running `{} login` to open browser authentication.\n\n\
-                 If that fails, jcode will fall back to saving a Cursor API key for `cursor-agent`.",
-                binary
-            )));
-            self.set_status_notice("Login: cursor browser...");
-
-            match crate::auth::login_flows::run_external_login_command_with_terminal_handoff(
-                &binary,
-                &["login"],
-            ) {
-                Ok(()) => {
-                    crate::telemetry::record_auth_success("cursor", "cli");
-                    self.push_display_message(DisplayMessage::system(
-                        "Cursor login completed.".to_string(),
-                    ));
-                    self.set_status_notice("Login: cursor ready");
-                    crate::auth::AuthStatus::invalidate_cache();
-                    return;
-                }
-                Err(e) => {
-                    let reason = crate::auth::login_diagnostics::classify_auth_failure_message(
-                        &e.to_string(),
-                    );
-                    crate::telemetry::record_auth_surface_blocked_reason(
-                        "cursor",
-                        "cli",
-                        reason.label(),
-                    );
-                    self.push_display_message(DisplayMessage::error(format!(
-                        "Cursor CLI login failed: {}\n\nFalling back to API key mode...",
-                        e
-                    )));
-                }
-            }
-        }
+        crate::telemetry::record_auth_started("cursor", "api_key");
 
         self.push_display_message(DisplayMessage::system(
             "**Cursor API Key**\n\n\
              Get your API key from: https://cursor.com/settings\n\
              (Dashboard > Integrations > User API Keys)\n\n\
-             jcode will save it securely and provide it to `cursor-agent` at runtime.\n\
-             You still need Cursor Agent installed to use the Cursor provider.\n\n\
+             jcode will save it securely and use the native Cursor HTTPS transport.\n\n\
              **Paste your API key below**, or type `/cancel` to abort."
                 .to_string(),
         ));
@@ -1540,6 +1530,15 @@ impl App {
                             crate::env::set_var(&key_name, &key);
                             Ok(())
                         })()
+                    } else if key_name == crate::provider::bedrock::API_KEY_ENV {
+                        (|| {
+                            Self::save_named_api_key(&env_file, &key_name, &key)?;
+                            crate::provider_catalog::save_env_value_to_env_file(
+                                crate::provider::bedrock::REGION_ENV,
+                                &env_file,
+                                Some("us-east-2"),
+                            )
+                        })()
                     } else {
                         Self::save_named_api_key(&env_file, &key_name, &key)
                     };
@@ -1547,6 +1546,13 @@ impl App {
                 match save_result {
                     Ok(()) => {
                         crate::auth::AuthStatus::invalidate_cache();
+                        if key_name == crate::provider::bedrock::API_KEY_ENV {
+                            crate::cli::provider_init::lock_model_provider("bedrock");
+                            if let Some(default_model) = default_model.as_deref() {
+                                crate::env::set_var("JCODE_BEDROCK_MODEL", default_model);
+                            }
+                        }
+
                         if let Some(profile) = openai_compatible_profile {
                             crate::provider_catalog::apply_openai_compatible_profile_env(Some(
                                 profile,
@@ -1559,6 +1565,7 @@ impl App {
                             {
                                 crate::env::set_var("JCODE_OPENROUTER_MODEL", default_model);
                             }
+                            self.start_openai_compatible_post_login_activation(provider.clone());
                         }
 
                         let effective_default_model = resolved_openai_compatible
@@ -1571,29 +1578,24 @@ impl App {
                         let guidance = if key_name == crate::subscription_catalog::JCODE_API_KEY_ENV
                         {
                             format!(
-                                "Use `--provider jcode` or `/login jcode` to access curated models via your router.\nDocs: {}",
+                                "Use `/login jcode` to access curated models via your router. If the model list looks stale, run `/refresh-model-list`.\nDocs: {}",
                                 docs_url
                             )
                         } else if let Some(resolved) = resolved_openai_compatible.as_ref() {
                             if resolved.requires_api_key {
-                                format!(
-                                    "Restart with `--provider {}` to use this backend in a new session.",
-                                    provider.to_lowercase().replace(' ', "-")
-                                )
+                                "Fetching models now. Jcode will switch to an accessible model and open `/model` when the catalog is ready. If the model list looks stale, run `/refresh-model-list`.".to_string()
                             } else {
                                 format!(
-                                    "Local endpoint configured at `{}`. Restart with `--provider {}` to use this backend in a new session.",
+                                    "Local endpoint configured at `{}`. Fetching models now; Jcode will switch to an accessible model and open `/model` when the catalog is ready. If the model list looks stale, run `/refresh-model-list`.",
                                     endpoint.as_deref().unwrap_or(resolved.api_base.as_str()),
-                                    provider.to_lowercase().replace(' ', "-")
                                 )
                             }
+                        } else if key_name == crate::provider::bedrock::API_KEY_ENV {
+                            "You can now use `/model` to switch to Bedrock models. TUI onboarding saved region `us-east-2`; for a different region, run `jcode login --provider bedrock` from a terminal.".to_string()
                         } else if key_name == "OPENROUTER_API_KEY" {
-                            "You can now use `/model` to switch to OpenRouter models.".to_string()
+                            "You can now use `/model` to switch to OpenRouter models. If the model list looks stale, run `/refresh-model-list`.".to_string()
                         } else {
-                            format!(
-                                "Restart with `--provider {}` to use this backend in a new session.",
-                                provider.to_lowercase().replace(' ', "-")
-                            )
+                            "API key saved. Run `/refresh-model-list` to refresh model discovery, then use `/model` to pick an accessible model.".to_string()
                         };
                         let saved_label = if let Some(resolved) =
                             resolved_openai_compatible.as_ref()
@@ -1696,8 +1698,7 @@ impl App {
                             success: true,
                             message: "**Cursor API key saved.**\n\n\
                              Stored at `~/.config/jcode/cursor.env`.\n\
-                             jcode will pass it to `cursor-agent` automatically.\n\
-                             Install Cursor Agent if it is not already on PATH."
+                             jcode will use it with the native Cursor HTTPS transport."
                                 .to_string(),
                         }));
                     }
@@ -1778,6 +1779,155 @@ impl App {
         }
     }
 
+    fn start_openai_compatible_post_login_activation(&mut self, provider_label: String) {
+        self.set_status_notice(format!("{}: fetching models...", provider_label));
+        self.invalidate_model_picker_cache();
+        self.open_model_picker();
+
+        // Make the newly saved OpenAI-compatible credentials usable in this
+        // session immediately. The normal LoginCompleted path also calls this,
+        // but doing it here lets the refresh task see the hot-added provider
+        // without requiring a restart or a second user action.
+        self.provider.on_auth_changed();
+
+        let provider = Arc::clone(&self.provider);
+        let session_id = self.session.id.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let result = provider.refresh_model_catalog().await;
+                match result {
+                    Ok(summary) => {
+                        let routes = provider.model_routes();
+                        let selected = routes
+                            .iter()
+                            .find(|route| {
+                                route.available
+                                    && route.provider == provider_label
+                                    && route.api_method.starts_with("openai-compatible")
+                                    && crate::provider::is_listable_model_name(&route.model)
+                            })
+                            .or_else(|| {
+                                routes.iter().find(|route| {
+                                    route.available
+                                        && route.api_method.starts_with("openai-compatible")
+                                        && crate::provider::is_listable_model_name(&route.model)
+                                })
+                            })
+                            .or_else(|| {
+                                routes.iter().find(|route| {
+                                    route.available
+                                        && route.provider == provider_label
+                                        && crate::provider::is_listable_model_name(&route.model)
+                                })
+                            })
+                            .map(|route| route.model.clone());
+
+                        if let Some(model) = selected {
+                            match provider.set_model(&model) {
+                                Ok(()) => {
+                                    crate::bus::Bus::global().publish_models_updated();
+                                    crate::bus::Bus::global().publish(
+                                        crate::bus::BusEvent::ProviderModelActivated {
+                                            session_id,
+                                            model: model.clone(),
+                                            message: format!(
+                                                "**{} is ready.**\n\nFetched model catalog: +{} models, +{} routes, ~{} changed.\nSwitched to `{}`. The model picker is open so you can choose another accessible model.\n\nIf the model list ever looks stale, run `/refresh-model-list`.",
+                                                provider_label,
+                                                summary.models_added,
+                                                summary.routes_added,
+                                                summary.routes_changed,
+                                                model
+                                            ),
+                                            open_picker: true,
+                                        },
+                                    );
+                                }
+                                Err(error) => {
+                                    crate::bus::Bus::global().publish(
+                                        crate::bus::BusEvent::LoginCompleted(
+                                            crate::bus::LoginCompleted {
+                                                provider: provider_label,
+                                                success: false,
+                                                message: format!(
+                                                    "Fetched models, but failed to switch to `{}`: {}\n\nYou can run `/refresh-model-list` to retry model discovery.",
+                                                    model, error
+                                                ),
+                                            },
+                                        ),
+                                    );
+                                }
+                            }
+                        } else if let Some(default_model) = crate::provider_catalog::openai_compatible_profiles()
+                            .iter()
+                            .copied()
+                            .find(|profile| {
+                                let resolved = crate::provider_catalog::resolve_openai_compatible_profile(*profile);
+                                resolved.display_name == provider_label
+                            })
+                            .and_then(|profile| crate::provider_catalog::resolve_openai_compatible_profile(profile).default_model)
+                        {
+                            match provider.set_model(&default_model) {
+                                Ok(()) => {
+                                    crate::bus::Bus::global().publish_models_updated();
+                                    crate::bus::Bus::global().publish(
+                                        crate::bus::BusEvent::ProviderModelActivated {
+                                            session_id,
+                                            model: default_model.clone(),
+                                            message: format!(
+                                                "**{} is ready.**\n\nThe live model catalog did not produce a selectable route yet, so Jcode selected the documented default `{}`. Run `/refresh-model-list` later to retry live discovery.",
+                                                provider_label,
+                                                default_model
+                                            ),
+                                            open_picker: true,
+                                        },
+                                    );
+                                }
+                                Err(error) => {
+                                    crate::bus::Bus::global().publish(crate::bus::BusEvent::LoginCompleted(
+                                        crate::bus::LoginCompleted {
+                                            provider: provider_label.clone(),
+                                            success: false,
+                                            message: format!(
+                                                "Fetched the model catalog, but it contained no selectable {} models and failed to switch to the documented default `{}`: {}\n\nRun `/refresh-model-list` to retry model discovery, then `jcode auth status` and `jcode auth doctor` for a structured diagnosis.",
+                                                provider_label,
+                                                default_model,
+                                                error
+                                            ),
+                                        },
+                                    ));
+                                }
+                            }
+                        } else {
+                            crate::bus::Bus::global().publish(crate::bus::BusEvent::LoginCompleted(
+                                crate::bus::LoginCompleted {
+                                    provider: provider_label.clone(),
+                                    success: false,
+                                    message:
+                                        format!(
+                                            "Fetched the model catalog, but it contained no selectable {} models. Run `/refresh-model-list` to retry model discovery, then `jcode auth status` and `jcode auth doctor` for a structured diagnosis.",
+                                            provider_label
+                                        ),
+                                },
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        crate::bus::Bus::global().publish(crate::bus::BusEvent::LoginCompleted(
+                            crate::bus::LoginCompleted {
+                                provider: provider_label,
+                                success: false,
+                                message: format!(
+                                    "Saved the API key, but failed to refresh the model catalog:\n\n{}\n\nRun `/refresh-model-list` to retry model discovery after checking the provider settings.",
+                                    error
+                                ),
+                            },
+                        ));
+                    }
+                }
+            });
+        }
+    }
+
     pub(super) fn handle_login_completed(&mut self, login: LoginCompleted) {
         if login.provider == "copilot_code" {
             self.push_display_message(DisplayMessage::system(login.message.clone()));
@@ -1806,6 +1956,7 @@ impl App {
             }
         }
         if login.success {
+            self.recent_authenticated_provider = Some((login.provider.clone(), Instant::now()));
             self.invalidate_model_picker_cache();
             self.push_display_message(DisplayMessage::system(login.message));
             self.set_status_notice(format!("Login: {} ready", login.provider));

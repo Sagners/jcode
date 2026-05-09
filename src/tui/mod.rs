@@ -28,7 +28,7 @@ pub mod workspace_client;
 pub use jcode_tui_workspace::workspace_map;
 pub use jcode_tui_workspace::workspace_map_widget;
 
-pub use app::{App, CopyBadgeUiState, DisplayMessage, ProcessingStatus, RunResult};
+pub use app::{App, CopyBadgeUiState, ProcessingStatus, RunResult};
 pub use generated_image::{
     generated_image_side_panel_markdown, generated_image_side_panel_page_id,
     write_generated_image_side_panel_page,
@@ -55,42 +55,11 @@ pub(crate) fn scheduled_notification_text(
     Some(format!("⏰ next scheduled task {}{}", next, suffix))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CopySelectionPane {
-    Chat,
-    SidePane,
-}
-
-impl CopySelectionPane {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Chat => "Chat",
-            Self::SidePane => "Side pane",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CopySelectionPoint {
-    pub pane: CopySelectionPane,
-    pub abs_line: usize,
-    pub column: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CopySelectionRange {
-    pub start: CopySelectionPoint,
-    pub end: CopySelectionPoint,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CopySelectionStatus {
-    pub pane: CopySelectionPane,
-    pub has_action: bool,
-    pub selected_chars: usize,
-    pub selected_lines: usize,
-    pub dragging: bool,
-}
+pub(crate) use self::core::DisplayMessageRoleExt;
+pub use jcode_tui_core::{
+    CopySelectionPane, CopySelectionPoint, CopySelectionRange, CopySelectionStatus,
+};
+pub use jcode_tui_messages::DisplayMessage;
 
 fn keyboard_enhancement_flags() -> crossterm::event::KeyboardEnhancementFlags {
     use crossterm::event::KeyboardEnhancementFlags;
@@ -279,6 +248,8 @@ pub trait TuiState {
     fn diff_pane_scroll(&self) -> usize;
     /// Horizontal pan offset for the shared right pane (side-panel diagrams)
     fn diff_pane_scroll_x(&self) -> i32;
+    /// Zoom percentage for image widgets rendered inside the side panel.
+    fn side_panel_image_zoom_percent(&self) -> u8;
     /// Whether the pinned diff pane is focused
     fn diff_pane_focus(&self) -> bool;
     /// Session-scoped side panel state managed by the side_panel tool
@@ -613,10 +584,10 @@ impl PickerKind {
         match self {
             Self::Model => InlineInteractiveSchema {
                 layout: InlineInteractiveLayout::ThreeColumn,
-                primary_label: "ITEM",
+                primary_label: "MODEL",
                 secondary_label: "PROVIDER",
                 secondary_preview_label: "PROVIDER",
-                tertiary_label: "ACTION",
+                tertiary_label: "METHOD",
                 preview_submit_hint: "  ↵ open",
                 active_submit_hint: "  ↑↓ ←→ ↵ Esc",
                 shows_default_shortcut_hint: true,
@@ -702,7 +673,13 @@ impl PickerKind {
                     .unwrap_or("");
                 format!("{} {} {} {}", entry.name, status, window, detail)
             }
-            Self::Model => entry.name.clone(),
+            Self::Model => {
+                let route = entry.active_option();
+                let provider = route.map(|option| option.provider.as_str()).unwrap_or("");
+                let method = route.map(|option| option.api_method.as_str()).unwrap_or("");
+                let detail = route.map(|option| option.detail.as_str()).unwrap_or("");
+                format!("{} {} {} {}", entry.name, provider, method, detail)
+            }
         }
     }
 }

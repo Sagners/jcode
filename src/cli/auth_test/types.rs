@@ -51,6 +51,7 @@ impl AuthTestTarget {
         !matches!(self, Self::Google)
     }
 
+    #[allow(deprecated)]
     fn from_provider_choice(choice: &super::provider_init::ProviderChoice) -> Option<Self> {
         match choice {
             super::provider_init::ProviderChoice::Claude
@@ -145,6 +146,9 @@ impl AuthTestTarget {
                     .ok_or_else(|| anyhow::anyhow!("No config directory found"))?
                     .join("jcode")
                     .join("cursor.env")
+                    .display()
+                    .to_string(),
+                crate::auth::cursor::cursor_auth_file_path()?
                     .display()
                     .to_string(),
                 crate::storage::user_home_path(".config/Cursor/User/globalStorage/state.vscdb")?

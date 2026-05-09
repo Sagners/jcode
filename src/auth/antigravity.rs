@@ -58,11 +58,10 @@ fn antigravity_version() -> String {
 }
 
 fn metadata_platform() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "WINDOWS"
-    } else {
-        "MACOS"
-    }
+    // The Cloud Code backend currently rejects OS-specific string enum values
+    // such as MACOS, WINDOWS, and LINUX for ClientMetadata.Platform. Use the
+    // string value that is accepted across platforms instead of varying by OS.
+    "PLATFORM_UNSPECIFIED"
 }
 
 fn user_agent() -> String {
@@ -615,6 +614,12 @@ mod tests {
             redirect_uri(DEFAULT_PORT),
             "http://127.0.0.1:51121/oauth-callback"
         );
+    }
+
+    #[test]
+    fn client_metadata_uses_backend_accepted_platform() {
+        assert_eq!(metadata_platform(), "PLATFORM_UNSPECIFIED");
+        assert!(client_metadata_header().contains("\"platform\":\"PLATFORM_UNSPECIFIED\""));
     }
 
     #[test]

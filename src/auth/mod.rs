@@ -17,7 +17,7 @@ pub mod refresh_state;
 mod status_types;
 pub mod validation;
 
-pub(crate) use commands::{command_available_from_env, command_exists};
+pub(crate) use commands::command_exists;
 #[cfg(test)]
 pub(crate) use commands::{
     command_candidates, contains_path_separator, dedup_preserve_order, has_extension,
@@ -66,6 +66,12 @@ fn env_truthy(key: &str) -> bool {
 
 fn auth_timing_logging_enabled() -> bool {
     env_truthy("JCODE_AUTH_TIMING")
+}
+
+fn openai_api_key_configured() -> bool {
+    crate::provider_catalog::load_api_key_from_env_or_config("OPENAI_API_KEY", "openai.env")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
 }
 
 fn copilot_auth_state_from_credentials() -> (AuthState, bool) {
@@ -140,6 +146,7 @@ impl AuthStatus {
             || self.openai == AuthState::Available
             || self.openrouter == AuthState::Available
             || self.azure == AuthState::Available
+            || self.bedrock == AuthState::Available
             || self.copilot == AuthState::Available
             || self.antigravity == AuthState::Available
             || self.gemini == AuthState::Available
@@ -168,6 +175,7 @@ impl AuthStatus {
             LoginProviderAuthStateKey::Anthropic => self.anthropic.state,
             LoginProviderAuthStateKey::OpenAi => self.openai,
             LoginProviderAuthStateKey::Azure => self.azure,
+            LoginProviderAuthStateKey::Bedrock => self.bedrock,
             LoginProviderAuthStateKey::OpenRouterLike => self.openrouter,
             LoginProviderAuthStateKey::Copilot => self.copilot,
             LoginProviderAuthStateKey::Antigravity => self.antigravity,
@@ -200,8 +208,22 @@ impl AuthStatus {
                     AuthState::NotConfigured
                 }
             }
+            crate::provider_catalog::LoginProviderTarget::OpenAiApiKey => {
+                if api_key_available("OPENAI_API_KEY", "openai.env") {
+                    AuthState::Available
+                } else {
+                    AuthState::NotConfigured
+                }
+            }
             crate::provider_catalog::LoginProviderTarget::Azure => {
                 if crate::auth::azure::has_configuration() {
+                    AuthState::Available
+                } else {
+                    AuthState::NotConfigured
+                }
+            }
+            crate::provider_catalog::LoginProviderTarget::Bedrock => {
+                if crate::provider::bedrock::BedrockProvider::has_credentials() {
                     AuthState::Available
                 } else {
                     AuthState::NotConfigured
@@ -251,9 +273,29 @@ impl AuthStatus {
                     "not configured".to_string()
                 }
             }
+            crate::provider_catalog::LoginProviderTarget::OpenAiApiKey => {
+                if self.state_for_provider(provider) == AuthState::Available {
+                    "API key (`OPENAI_API_KEY`)".to_string()
+                } else {
+                    "not configured".to_string()
+                }
+            }
             crate::provider_catalog::LoginProviderTarget::Azure => {
                 if self.state_for_provider(provider) == AuthState::Available {
                     crate::auth::azure::method_detail()
+                } else {
+                    "not configured".to_string()
+                }
+            }
+            crate::provider_catalog::LoginProviderTarget::Bedrock => {
+                if self.state_for_provider(provider) == AuthState::Available {
+                    if crate::provider::bedrock::BedrockProvider::configured_bearer_token()
+                        .is_some()
+                    {
+                        "Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`)".to_string()
+                    } else {
+                        "AWS credential chain".to_string()
+                    }
                 } else {
                     "not configured".to_string()
                 }
@@ -404,6 +446,20 @@ impl AuthStatus {
                     AuthValidationMethod::PresenceCheck,
                 )
             }
+            crate::provider_catalog::LoginProviderTarget::OpenAiApiKey => {
+                let (source, detail) = summarize_sources(vec![
+                    env_source("OPENAI_API_KEY"),
+                    config_source("OPENAI_API_KEY", "openai.env", "~/.config/jcode/openai.env"),
+                    external_api_key_source("OPENAI_API_KEY"),
+                ]);
+                (
+                    source,
+                    detail,
+                    AuthExpiryConfidence::NotApplicable,
+                    AuthRefreshSupport::NotApplicable,
+                    AuthValidationMethod::PresenceCheck,
+                )
+            }
             crate::provider_catalog::LoginProviderTarget::Azure => {
                 let (source, detail) = summarize_sources(vec![
                     azure_entra_source(),
@@ -424,6 +480,26 @@ impl AuthStatus {
                         AuthRefreshSupport::NotApplicable
                     },
                     AuthValidationMethod::ConfigurationCheck,
+                )
+            }
+            crate::provider_catalog::LoginProviderTarget::Bedrock => {
+                let (source, detail) = summarize_sources(vec![
+                    env_source(crate::provider::bedrock::API_KEY_ENV),
+                    config_source(
+                        crate::provider::bedrock::API_KEY_ENV,
+                        crate::provider::bedrock::ENV_FILE,
+                        "~/.config/jcode/bedrock.env",
+                    ),
+                    env_source("AWS_PROFILE"),
+                    env_source("JCODE_BEDROCK_PROFILE"),
+                    env_source("AWS_ACCESS_KEY_ID"),
+                ]);
+                (
+                    source,
+                    detail,
+                    AuthExpiryConfidence::Unknown,
+                    AuthRefreshSupport::ExternalManaged,
+                    AuthValidationMethod::PresenceCheck,
                 )
             }
             crate::provider_catalog::LoginProviderTarget::OpenAiCompatible(profile) => {
@@ -515,6 +591,14 @@ impl AuthStatus {
             status.azure = AuthState::Available;
         }
 
+        if crate::provider::bedrock::BedrockProvider::has_credentials() {
+            status.bedrock = AuthState::Available;
+        }
+
+        if crate::provider::bedrock::BedrockProvider::has_credentials() {
+            status.bedrock = AuthState::Available;
+        }
+
         // Check OpenAI (Codex OAuth or API key)
         if let Ok(creds) = codex::load_credentials() {
             // Check if we have OAuth tokens (not just API key fallback)
@@ -540,11 +624,7 @@ impl AuthStatus {
         }
 
         // Fall back to env var (or combine with OAuth)
-        if std::env::var("OPENAI_API_KEY")
-            .ok()
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false)
-        {
+        if openai_api_key_configured() {
             status.openai_has_api_key = true;
             status.openai = AuthState::Available;
         }
@@ -579,18 +659,12 @@ impl AuthStatus {
             Err(_) => AuthState::NotConfigured,
         };
 
-        let cursor_has_cli = cursor::has_cursor_agent_cli();
         let cursor_has_api_key = cursor::has_cursor_api_key();
         let cursor_has_native_auth = cursor::has_cursor_native_auth();
-        let cursor_has_cli_auth = if cursor_has_cli {
-            cursor::has_cursor_agent_auth()
-        } else {
-            false
-        };
 
-        status.cursor = if cursor_has_native_auth || (cursor_has_cli && cursor_has_cli_auth) {
+        status.cursor = if cursor_has_native_auth {
             AuthState::Available
-        } else if cursor_has_cli || cursor_has_api_key {
+        } else if cursor_has_api_key {
             AuthState::Expired
         } else {
             AuthState::NotConfigured
@@ -678,11 +752,7 @@ impl AuthStatus {
                 status.openai = AuthState::Available;
             }
         }
-        if std::env::var("OPENAI_API_KEY")
-            .ok()
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false)
-        {
+        if openai_api_key_configured() {
             status.openai_has_api_key = true;
             status.openai = AuthState::Available;
         }
@@ -721,14 +791,11 @@ impl AuthStatus {
         timings.push(("gemini", step_start.elapsed().as_millis()));
 
         let step_start = Instant::now();
-        let cursor_has_cli = cursor::has_cursor_agent_cli();
         let cursor_has_api_key = cursor::has_cursor_api_key();
         let cursor_has_file_or_env_auth = cursor::load_access_token_from_env_or_file().is_ok();
 
         status.cursor = if cursor_has_file_or_env_auth || cursor_has_api_key {
             AuthState::Available
-        } else if cursor_has_cli {
-            AuthState::Expired
         } else {
             AuthState::NotConfigured
         };
@@ -910,6 +977,7 @@ fn assessment_for_key(
         }
         LoginProviderAuthStateKey::Jcode
         | LoginProviderAuthStateKey::Azure
+        | LoginProviderAuthStateKey::Bedrock
         | LoginProviderAuthStateKey::OpenRouterLike
         | LoginProviderAuthStateKey::ExternalImport => (
             AuthCredentialSource::None,
@@ -1161,12 +1229,6 @@ fn cursor_source() -> Option<(AuthCredentialSource, String)> {
     }
     if config_source("CURSOR_API_KEY", "cursor.env", "~/.config/jcode/cursor.env").is_some() {
         return config_source("CURSOR_API_KEY", "cursor.env", "~/.config/jcode/cursor.env");
-    }
-    if crate::auth::cursor::has_cursor_agent_auth() {
-        return Some((
-            AuthCredentialSource::LocalCliSession,
-            "cursor-agent authenticated session".to_string(),
-        ));
     }
     None
 }

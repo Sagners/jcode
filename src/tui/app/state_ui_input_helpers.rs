@@ -98,6 +98,7 @@ const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/back", "Return to the previous Catch Up session"),
     RegisteredCommand::public("/save", "Bookmark session for easy access"),
     RegisteredCommand::public("/unsave", "Remove bookmark from session"),
+    RegisteredCommand::public("/rename", "Rename current session"),
     RegisteredCommand::public("/split", "Split session into a new window"),
     RegisteredCommand::public("/transfer", "Compact context into a fresh handoff session"),
     RegisteredCommand::public("/workspace", "Niri-style session workspace"),
@@ -353,8 +354,9 @@ impl App {
         if model.is_empty() {
             return Vec::new();
         }
-        let openrouter_model = crate::provider::openrouter_catalog_model_id(model)
-            .unwrap_or_else(|| model.to_string());
+        let Some(openrouter_model) = crate::provider::openrouter_catalog_model_id(model) else {
+            return Vec::new();
+        };
 
         let mut seen = std::collections::HashSet::new();
         let mut suggestions = Vec::new();
@@ -954,7 +956,24 @@ impl App {
         }
 
         if prefix.starts_with("/rewind ") {
-            let suggestions = (1..=self.session.messages.len())
+            let arg = prefix.strip_prefix("/rewind ").unwrap_or_default().trim();
+            let visible_count = self.session.visible_conversation_message_count();
+
+            // Rewind targets are 1-based visible conversation message numbers.
+            // Do not fuzzy-rank numeric arguments: `/rewind 10` should never be
+            // completed or preview-accepted as `/rewind 1` just because `1` is a
+            // fuzzy prefix match. If a complete numeric target is present, only
+            // surface the exact valid command.
+            if !arg.is_empty() && arg.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(n) = arg.parse::<usize>()
+                    && (1..=visible_count).contains(&n)
+                {
+                    return vec![(format!("/rewind {}", n), "Rewind to this message")];
+                }
+                return Vec::new();
+            }
+
+            let suggestions = (1..=visible_count)
                 .map(|n| (format!("/rewind {}", n), "Rewind to this message"))
                 .collect();
             return self.rank_suggestions(input, suggestions);
@@ -1164,6 +1183,7 @@ impl App {
                 | "/alignment"
                 | "/config"
                 | "/save"
+                | "/rename"
                 | "/cache"
         )
     }

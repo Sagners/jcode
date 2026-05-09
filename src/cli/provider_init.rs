@@ -27,10 +27,21 @@ pub(crate) use external_auth::{
 pub enum ProviderChoice {
     Jcode,
     Claude,
+    #[deprecated(
+        note = "Claude Code CLI subprocess transport is deprecated; use ProviderChoice::Claude for native Anthropic OAuth/API transport"
+    )]
     #[value(alias = "claude-subprocess", hide = true)]
     ClaudeSubprocess,
     Openai,
+    #[value(
+        alias = "openai-key",
+        alias = "openai-apikey",
+        alias = "openai-platform"
+    )]
+    OpenaiApi,
     Openrouter,
+    #[value(alias = "aws-bedrock", alias = "aws_bedrock")]
+    Bedrock,
     #[value(alias = "azure-openai", alias = "aoai")]
     Azure,
     #[value(alias = "opencode-zen", alias = "zen")]
@@ -51,7 +62,11 @@ pub enum ProviderChoice {
     Ai302,
     Baseten,
     Cortecs,
+    #[value(alias = "cgc", alias = "comtegra-gpu-cloud")]
+    Comtegra,
     Deepseek,
+    #[value(alias = "fpt-ai", alias = "fptcloud", alias = "fpt-cloud")]
+    Fpt,
     Firmware,
     #[value(alias = "hugging-face", alias = "hf")]
     HuggingFace,
@@ -99,13 +114,16 @@ pub enum ProviderChoice {
 }
 
 impl ProviderChoice {
+    #[allow(deprecated)]
     pub fn as_arg_value(&self) -> &'static str {
         match self {
             Self::Jcode => "jcode",
             Self::Claude => "claude",
             Self::ClaudeSubprocess => "claude-subprocess",
             Self::Openai => "openai",
+            Self::OpenaiApi => "openai-api",
             Self::Openrouter => "openrouter",
+            Self::Bedrock => "bedrock",
             Self::Azure => "azure",
             Self::Opencode => "opencode",
             Self::OpencodeGo => "opencode-go",
@@ -114,7 +132,9 @@ impl ProviderChoice {
             Self::Ai302 => "302ai",
             Self::Baseten => "baseten",
             Self::Cortecs => "cortecs",
+            Self::Comtegra => "comtegra",
             Self::Deepseek => "deepseek",
+            Self::Fpt => "fpt",
             Self::Firmware => "firmware",
             Self::HuggingFace => "huggingface",
             Self::MoonshotAi => "moonshotai",
@@ -154,7 +174,9 @@ pub fn profile_for_choice(choice: &ProviderChoice) -> Option<OpenAiCompatiblePro
         ProviderChoice::Ai302 => Some(crate::provider_catalog::AI302_PROFILE),
         ProviderChoice::Baseten => Some(crate::provider_catalog::BASETEN_PROFILE),
         ProviderChoice::Cortecs => Some(crate::provider_catalog::CORTECS_PROFILE),
+        ProviderChoice::Comtegra => Some(crate::provider_catalog::COMTEGRA_PROFILE),
         ProviderChoice::Deepseek => Some(crate::provider_catalog::DEEPSEEK_PROFILE),
+        ProviderChoice::Fpt => Some(crate::provider_catalog::FPT_PROFILE),
         ProviderChoice::Firmware => Some(crate::provider_catalog::FIRMWARE_PROFILE),
         ProviderChoice::HuggingFace => Some(crate::provider_catalog::HUGGING_FACE_PROFILE),
         ProviderChoice::MoonshotAi => Some(crate::provider_catalog::MOONSHOT_PROFILE),
@@ -181,6 +203,7 @@ pub fn profile_for_choice(choice: &ProviderChoice) -> Option<OpenAiCompatiblePro
     }
 }
 
+#[allow(deprecated)]
 pub fn login_provider_for_choice(choice: &ProviderChoice) -> Option<LoginProviderDescriptor> {
     match choice {
         ProviderChoice::Jcode => Some(crate::provider_catalog::JCODE_LOGIN_PROVIDER),
@@ -188,7 +211,9 @@ pub fn login_provider_for_choice(choice: &ProviderChoice) -> Option<LoginProvide
             Some(crate::provider_catalog::CLAUDE_LOGIN_PROVIDER)
         }
         ProviderChoice::Openai => Some(crate::provider_catalog::OPENAI_LOGIN_PROVIDER),
+        ProviderChoice::OpenaiApi => Some(crate::provider_catalog::OPENAI_API_LOGIN_PROVIDER),
         ProviderChoice::Openrouter => Some(crate::provider_catalog::OPENROUTER_LOGIN_PROVIDER),
+        ProviderChoice::Bedrock => Some(crate::provider_catalog::BEDROCK_LOGIN_PROVIDER),
         ProviderChoice::Azure => Some(crate::provider_catalog::AZURE_LOGIN_PROVIDER),
         ProviderChoice::Opencode => Some(crate::provider_catalog::OPENCODE_LOGIN_PROVIDER),
         ProviderChoice::OpencodeGo => Some(crate::provider_catalog::OPENCODE_GO_LOGIN_PROVIDER),
@@ -197,7 +222,9 @@ pub fn login_provider_for_choice(choice: &ProviderChoice) -> Option<LoginProvide
         ProviderChoice::Ai302 => Some(crate::provider_catalog::AI302_LOGIN_PROVIDER),
         ProviderChoice::Baseten => Some(crate::provider_catalog::BASETEN_LOGIN_PROVIDER),
         ProviderChoice::Cortecs => Some(crate::provider_catalog::CORTECS_LOGIN_PROVIDER),
+        ProviderChoice::Comtegra => Some(crate::provider_catalog::COMTEGRA_LOGIN_PROVIDER),
         ProviderChoice::Deepseek => Some(crate::provider_catalog::DEEPSEEK_LOGIN_PROVIDER),
+        ProviderChoice::Fpt => Some(crate::provider_catalog::FPT_LOGIN_PROVIDER),
         ProviderChoice::Firmware => Some(crate::provider_catalog::FIRMWARE_LOGIN_PROVIDER),
         ProviderChoice::HuggingFace => Some(crate::provider_catalog::HUGGING_FACE_LOGIN_PROVIDER),
         ProviderChoice::MoonshotAi => Some(crate::provider_catalog::MOONSHOT_LOGIN_PROVIDER),
@@ -237,7 +264,9 @@ pub fn choice_for_login_provider(provider: LoginProviderDescriptor) -> Option<Pr
         LoginProviderTarget::Jcode => Some(ProviderChoice::Jcode),
         LoginProviderTarget::Claude => Some(ProviderChoice::Claude),
         LoginProviderTarget::OpenAi => Some(ProviderChoice::Openai),
+        LoginProviderTarget::OpenAiApiKey => Some(ProviderChoice::OpenaiApi),
         LoginProviderTarget::OpenRouter => Some(ProviderChoice::Openrouter),
+        LoginProviderTarget::Bedrock => Some(ProviderChoice::Bedrock),
         LoginProviderTarget::Azure => Some(ProviderChoice::Azure),
         LoginProviderTarget::OpenAiCompatible(profile) => [
             ProviderChoice::Opencode,
@@ -247,7 +276,9 @@ pub fn choice_for_login_provider(provider: LoginProviderDescriptor) -> Option<Pr
             ProviderChoice::Ai302,
             ProviderChoice::Baseten,
             ProviderChoice::Cortecs,
+            ProviderChoice::Comtegra,
             ProviderChoice::Deepseek,
+            ProviderChoice::Fpt,
             ProviderChoice::Firmware,
             ProviderChoice::HuggingFace,
             ProviderChoice::MoonshotAi,
@@ -547,12 +578,13 @@ fn maybe_enable_external_api_key_auth_for_auto(has_other_provider: bool) -> Resu
         let provider_name = provider_label_for_api_key_env(&env_key);
         let login_hint = provider_login_hint_for_api_key_env(&env_key);
         if !can_prompt_for_external_auth() {
-            anyhow::bail!(external_auth_blocked_message(
+            crate::logging::warn(&external_auth_blocked_message(
                 &provider_name,
                 source.display_name(),
                 &path,
                 &login_hint,
             ));
+            return Ok(false);
         }
         if prompt_to_trust_external_auth(&provider_name, source.display_name(), &path)? {
             auth::external::trust_external_auth_source(source)?;
@@ -576,6 +608,15 @@ fn maybe_prompt_for_generic_oauth_source(
     };
     let path = source.path()?;
     if !can_prompt_for_external_auth() {
+        if auto {
+            crate::logging::warn(&external_auth_blocked_message(
+                provider_name,
+                source.display_name(),
+                &path,
+                login_hint,
+            ));
+            return Ok(false);
+        }
         anyhow::bail!(external_auth_blocked_message(
             provider_name,
             source.display_name(),
@@ -659,12 +700,13 @@ fn maybe_enable_legacy_codex_auth_for_auto(has_other_provider: bool) -> Result<b
     let path = auth::codex::legacy_auth_file_path()?;
 
     if !can_prompt_for_external_auth() {
-        anyhow::bail!(external_auth_blocked_message(
+        crate::logging::warn(&external_auth_blocked_message(
             "OpenAI/Codex",
             "Codex",
             &path,
-            "jcode login --provider openai"
+            "jcode login --provider openai",
         ));
+        return Ok(false);
     }
 
     if prompt_to_trust_external_auth("OpenAI/Codex", "Codex", &path)? {
@@ -745,12 +787,13 @@ fn maybe_enable_claude_auth_for_auto(has_other_provider: bool) -> Result<bool> {
     }
     let path = source.path()?;
     if !can_prompt_for_external_auth() {
-        anyhow::bail!(external_auth_blocked_message(
+        crate::logging::warn(&external_auth_blocked_message(
             "Claude",
             source.display_name(),
             &path,
-            "jcode login --provider claude"
+            "jcode login --provider claude",
         ));
+        return Ok(false);
     }
     if prompt_to_trust_external_auth("Claude", source.display_name(), &path)? {
         auth::claude::trust_external_auth_source(source)?;
@@ -821,12 +864,13 @@ fn maybe_enable_gemini_auth_for_auto(has_other_provider: bool) -> Result<bool> {
     }
     let path = auth::gemini::gemini_cli_oauth_path()?;
     if !can_prompt_for_external_auth() {
-        anyhow::bail!(external_auth_blocked_message(
+        crate::logging::warn(&external_auth_blocked_message(
             "Gemini",
             "Gemini CLI",
             &path,
-            "jcode login --provider gemini"
+            "jcode login --provider gemini",
         ));
+        return Ok(false);
     }
     if prompt_to_trust_external_auth("Gemini", "Gemini CLI", &path)? {
         auth::gemini::trust_cli_auth_for_future_use()?;
@@ -890,12 +934,13 @@ fn maybe_enable_copilot_auth_for_auto(has_other_provider: bool) -> Result<bool> 
     }
     let path = source.path();
     if !can_prompt_for_external_auth() {
-        anyhow::bail!(external_auth_blocked_message(
+        crate::logging::warn(&external_auth_blocked_message(
             "GitHub Copilot",
             source.display_name(),
             &path,
-            "jcode login --provider copilot"
+            "jcode login --provider copilot",
         ));
+        return Ok(false);
     }
     if prompt_to_trust_external_auth("GitHub Copilot", source.display_name(), &path)? {
         auth::copilot::trust_external_auth_source(source)?;
@@ -941,12 +986,13 @@ fn maybe_enable_cursor_auth_for_auto(has_other_provider: bool) -> Result<bool> {
     }
     let path = source.path()?;
     if !can_prompt_for_external_auth() {
-        anyhow::bail!(external_auth_blocked_message(
+        crate::logging::warn(&external_auth_blocked_message(
             "Cursor",
             source.display_name(),
             &path,
-            "jcode login --provider cursor"
+            "jcode login --provider cursor",
         ));
+        return Ok(false);
     }
     if prompt_to_trust_external_auth("Cursor", source.display_name(), &path)? {
         auth::cursor::trust_external_auth_source(source)?;
@@ -1004,8 +1050,18 @@ pub async fn login_and_bootstrap_provider(
             disable_subscription_runtime_mode();
             Arc::new(provider::MultiProvider::with_preference(true))
         }
+        LoginProviderTarget::OpenAiApiKey => {
+            disable_subscription_runtime_mode();
+            lock_model_provider("openai");
+            Arc::new(provider::MultiProvider::with_preference(true))
+        }
         LoginProviderTarget::OpenRouter => {
             disable_subscription_runtime_mode();
+            Arc::new(provider::MultiProvider::new())
+        }
+        LoginProviderTarget::Bedrock => {
+            disable_subscription_runtime_mode();
+            lock_model_provider("bedrock");
             Arc::new(provider::MultiProvider::new())
         }
         LoginProviderTarget::Azure => {
@@ -1049,7 +1105,7 @@ pub async fn login_and_bootstrap_provider(
             disable_subscription_runtime_mode();
             unlock_model_provider();
             crate::env::set_var("JCODE_ACTIVE_PROVIDER", "antigravity");
-            Arc::new(provider::antigravity::AntigravityCliProvider::new())
+            Arc::new(provider::antigravity::AntigravityProvider::new())
         }
         LoginProviderTarget::Google => {
             anyhow::bail!("Google login cannot be used as a model provider bootstrap");
@@ -1096,6 +1152,7 @@ pub async fn init_provider_for_validation(
     init_provider_with_options(choice, model, false, false).await
 }
 
+#[allow(deprecated)]
 async fn init_provider_with_options(
     choice: &ProviderChoice,
     model: Option<&str>,
@@ -1157,10 +1214,17 @@ async fn init_provider_with_options(
             lock_model_provider("openai");
             Arc::new(provider::MultiProvider::with_preference_fast(true))
         }
+        ProviderChoice::OpenaiApi => {
+            disable_subscription_runtime_mode();
+            ensure_external_api_key_auth_allowed_for_explicit_choice("OPENAI_API_KEY")?;
+            init_notice("Using OpenAI API key provider (provider locked)");
+            lock_model_provider("openai");
+            Arc::new(provider::MultiProvider::with_preference_fast(true))
+        }
         ProviderChoice::Cursor => {
             disable_subscription_runtime_mode();
             ensure_cursor_auth_allowed_for_explicit_choice()?;
-            init_notice("Using Cursor CLI provider (experimental)");
+            init_notice("Using Cursor native HTTPS provider (experimental)");
             unlock_model_provider();
             crate::env::set_var("JCODE_ACTIVE_PROVIDER", "cursor");
             Arc::new(provider::cursor::CursorCliProvider::new())
@@ -1187,6 +1251,12 @@ async fn init_provider_with_options(
             lock_model_provider("openrouter");
             Arc::new(provider::MultiProvider::new_fast())
         }
+        ProviderChoice::Bedrock => {
+            disable_subscription_runtime_mode();
+            init_notice("Using AWS Bedrock provider (provider locked)");
+            lock_model_provider("bedrock");
+            Arc::new(provider::MultiProvider::new_fast())
+        }
         ProviderChoice::Azure => {
             disable_subscription_runtime_mode();
             crate::auth::azure::apply_runtime_env()?;
@@ -1204,7 +1274,9 @@ async fn init_provider_with_options(
         | ProviderChoice::Ai302
         | ProviderChoice::Baseten
         | ProviderChoice::Cortecs
+        | ProviderChoice::Comtegra
         | ProviderChoice::Deepseek
+        | ProviderChoice::Fpt
         | ProviderChoice::Firmware
         | ProviderChoice::HuggingFace
         | ProviderChoice::MoonshotAi
@@ -1265,16 +1337,16 @@ async fn init_provider_with_options(
                     )?,
                 )
             } else {
-                Arc::new(provider::MultiProvider::new_fast())
+                Arc::new(provider::openrouter::OpenRouterProvider::new()?)
             }
         }
         ProviderChoice::Antigravity => {
             disable_subscription_runtime_mode();
             ensure_antigravity_auth_allowed_for_explicit_choice()?;
-            init_notice("Using Antigravity CLI provider (experimental)");
+            init_notice("Using Antigravity provider (experimental)");
             unlock_model_provider();
             crate::env::set_var("JCODE_ACTIVE_PROVIDER", "antigravity");
-            Arc::new(provider::antigravity::AntigravityCliProvider::new())
+            Arc::new(provider::antigravity::AntigravityProvider::new())
         }
         ProviderChoice::Google => {
             disable_subscription_runtime_mode();

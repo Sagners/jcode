@@ -516,6 +516,10 @@ impl Provider for OpenRouterProvider {
             "stream": true,
         });
 
+        if let Some(max_tokens) = self.max_tokens {
+            request["max_tokens"] = serde_json::json!(max_tokens);
+        }
+
         if !api_tools.is_empty() {
             request["tools"] = serde_json::json!(api_tools);
             request["tool_choice"] = serde_json::json!("auto");
@@ -616,6 +620,10 @@ impl Provider for OpenRouterProvider {
             .try_read()
             .map(|m| m.clone())
             .unwrap_or_else(|_| DEFAULT_MODEL.to_string())
+    }
+
+    fn supports_image_input(&self) -> bool {
+        false
     }
 
     fn set_model(&self, model: &str) -> Result<()> {
@@ -723,6 +731,15 @@ impl Provider for OpenRouterProvider {
             return merge_static_models(cache_entry.models.into_iter().map(|m| m.id).collect());
         }
 
+        // No memory or disk catalog yet. This commonly happens immediately after
+        // adding a new OpenAI-compatible endpoint from `/login`: the provider is
+        // hot-initialized, but the picker may render before the post-auth
+        // prefetch has completed. Make the picker path self-healing by starting
+        // the first `/models` fetch here, then return the best immediate
+        // fallback. The background refresh publishes ModelsUpdated, which
+        // invalidates/reopens the picker with the newly discovered models.
+        self.maybe_schedule_model_catalog_refresh(u64::MAX, "display cache miss");
+
         if !self.static_models.is_empty() {
             return with_current_model(self.static_models.clone());
         }
@@ -737,6 +754,46 @@ impl Provider for OpenRouterProvider {
 
     fn available_models_for_switching(&self) -> Vec<String> {
         self.available_models_display()
+    }
+
+    fn model_routes(&self) -> Vec<crate::provider::ModelRoute> {
+        let provider_label = self
+            .profile_id
+            .as_deref()
+            .and_then(openai_compatible_profile_by_id)
+            .map(|profile| profile.display_name.to_string())
+            .unwrap_or_else(|| {
+                if self.supports_provider_features {
+                    "OpenRouter".to_string()
+                } else {
+                    "OpenAI-compatible".to_string()
+                }
+            });
+        let api_method = if self.supports_provider_features {
+            "openrouter".to_string()
+        } else if let Some(profile_id) = self.profile_id.as_deref() {
+            format!("openai-compatible:{}", profile_id)
+        } else {
+            "openai-compatible".to_string()
+        };
+        let detail = if self.supports_provider_features {
+            String::new()
+        } else {
+            self.api_base.clone()
+        };
+
+        self.available_models_display()
+            .into_iter()
+            .filter(|model| crate::provider::is_listable_model_name(model))
+            .map(|model| crate::provider::ModelRoute {
+                model,
+                provider: provider_label.clone(),
+                api_method: api_method.clone(),
+                available: true,
+                detail: detail.clone(),
+                cheapness: None,
+            })
+            .collect()
     }
 
     async fn prefetch_models(&self) -> Result<()> {
@@ -845,6 +902,7 @@ impl Provider for OpenRouterProvider {
             supports_provider_features: self.supports_provider_features,
             supports_model_catalog: self.supports_model_catalog,
             profile_id: self.profile_id.clone(),
+            max_tokens: self.max_tokens,
             static_models: self.static_models.clone(),
             static_context_limits: self.static_context_limits.clone(),
             send_openrouter_headers: self.send_openrouter_headers,

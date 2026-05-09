@@ -134,54 +134,96 @@ impl App {
         let mut routes = Vec::new();
 
         for model in self.provider.available_models_display() {
-            let (provider, api_method, available, detail) = if model.contains('/') {
-                (
-                    "auto".to_string(),
-                    "openrouter".to_string(),
-                    auth.openrouter != crate::auth::AuthState::NotConfigured,
-                    "simplified catalog".to_string(),
-                )
-            } else {
-                match crate::provider::provider_for_model(&model) {
-                    Some("claude") => (
-                        "Anthropic".to_string(),
-                        "claude-oauth".to_string(),
-                        auth.anthropic.has_oauth || auth.anthropic.has_api_key,
-                        String::new(),
-                    ),
-                    Some("openai") => (
-                        "OpenAI".to_string(),
-                        "openai-oauth".to_string(),
-                        auth.openai != crate::auth::AuthState::NotConfigured,
-                        String::new(),
-                    ),
-                    Some("gemini") => (
-                        "Gemini".to_string(),
-                        "code-assist-oauth".to_string(),
-                        auth.gemini != crate::auth::AuthState::NotConfigured,
-                        String::new(),
-                    ),
-                    Some("cursor") => (
-                        "Cursor".to_string(),
-                        "cursor".to_string(),
-                        auth.cursor != crate::auth::AuthState::NotConfigured,
-                        String::new(),
-                    ),
-                    Some("openrouter") => (
+            if !model.contains('/') && crate::provider::provider_for_model(&model) == Some("openai")
+            {
+                if auth.openai_has_oauth {
+                    routes.push(crate::provider::ModelRoute {
+                        model: model.clone(),
+                        provider: "OpenAI".to_string(),
+                        api_method: "openai-oauth".to_string(),
+                        available: true,
+                        detail: String::new(),
+                        cheapness: None,
+                    });
+                }
+                if auth.openai_has_api_key {
+                    routes.push(crate::provider::ModelRoute {
+                        model: model.clone(),
+                        provider: "OpenAI".to_string(),
+                        api_method: "openai-api-key".to_string(),
+                        available: true,
+                        detail: String::new(),
+                        cheapness: None,
+                    });
+                }
+                if auth.openai == crate::auth::AuthState::NotConfigured {
+                    routes.push(crate::provider::ModelRoute {
+                        model,
+                        provider: "OpenAI".to_string(),
+                        api_method: "openai-oauth".to_string(),
+                        available: false,
+                        detail: "no credentials".to_string(),
+                        cheapness: None,
+                    });
+                }
+                continue;
+            }
+
+            let (provider, api_method, available, detail) =
+                if crate::provider::bedrock::BedrockProvider::is_bedrock_model_id(&model) {
+                    (
+                        "AWS Bedrock".to_string(),
+                        "bedrock".to_string(),
+                        auth.bedrock != crate::auth::AuthState::NotConfigured,
+                        if auth.bedrock == crate::auth::AuthState::NotConfigured {
+                            "no Bedrock credentials or region; run /login bedrock".to_string()
+                        } else {
+                            String::new()
+                        },
+                    )
+                } else if model.contains('/') {
+                    (
                         "auto".to_string(),
                         "openrouter".to_string(),
                         auth.openrouter != crate::auth::AuthState::NotConfigured,
                         "simplified catalog".to_string(),
-                    ),
-                    Some(other) => (other.to_string(), other.to_string(), true, String::new()),
-                    None => (
-                        self.provider.name().to_string(),
-                        "current".to_string(),
-                        true,
-                        String::new(),
-                    ),
-                }
-            };
+                    )
+                } else {
+                    match crate::provider::provider_for_model(&model) {
+                        Some("claude") => (
+                            "Anthropic".to_string(),
+                            "claude-oauth".to_string(),
+                            auth.anthropic.has_oauth || auth.anthropic.has_api_key,
+                            String::new(),
+                        ),
+                        Some("openai") => unreachable!("OpenAI models are handled above"),
+                        Some("gemini") => (
+                            "Gemini".to_string(),
+                            "code-assist-oauth".to_string(),
+                            auth.gemini != crate::auth::AuthState::NotConfigured,
+                            String::new(),
+                        ),
+                        Some("cursor") => (
+                            "Cursor".to_string(),
+                            "cursor".to_string(),
+                            auth.cursor != crate::auth::AuthState::NotConfigured,
+                            String::new(),
+                        ),
+                        Some("openrouter") => (
+                            "auto".to_string(),
+                            "openrouter".to_string(),
+                            auth.openrouter != crate::auth::AuthState::NotConfigured,
+                            "simplified catalog".to_string(),
+                        ),
+                        Some(other) => (other.to_string(), other.to_string(), true, String::new()),
+                        None => (
+                            self.provider.name().to_string(),
+                            "current".to_string(),
+                            true,
+                            String::new(),
+                        ),
+                    }
+                };
 
             routes.push(crate::provider::ModelRoute {
                 model,
@@ -209,6 +251,16 @@ impl App {
 
     pub(super) fn open_model_picker(&mut self) {
         let picker_started = std::time::Instant::now();
+        const RECENT_AUTH_BOOST_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+        if self
+            .recent_authenticated_provider
+            .as_ref()
+            .map(|(_, at)| at.elapsed() > RECENT_AUTH_BOOST_TTL)
+            .unwrap_or(false)
+        {
+            self.recent_authenticated_provider = None;
+            self.invalidate_model_picker_cache();
+        }
 
         let current_model = if self.is_remote {
             self.remote_provider_model
@@ -394,7 +446,9 @@ impl App {
                     result.routes_ms,
                     true,
                 );
-                self.set_status_notice("Model list updated");
+                if self.inline_interactive_state.is_some() {
+                    self.set_status_notice("Model list updated");
+                }
                 true
             }
             Err(error) => {
@@ -494,11 +548,11 @@ impl App {
         fn route_sort_key(r: &PickerOption) -> (u8, u8, u64, String) {
             let avail = if r.available { 0 } else { 1 };
             let method = match r.api_method.as_str() {
-                "claude-oauth" | "openai-oauth" => 0,
-                "copilot" => 1,
+                "claude-oauth" | "openai-oauth" | "openai-api-key" => 0,
+                "api-key" => 1,
+                method if method.starts_with("openai-compatible") => 1,
                 "cursor" => 2,
-                "api-key" => 3,
-                method if method.starts_with("openai-compatible") => 3,
+                "copilot" => 3,
                 "openrouter" => 4,
                 _ => 5,
             };
@@ -506,24 +560,56 @@ impl App {
             (avail, method, cheapness, r.provider.clone())
         }
 
-        const RECOMMENDED_MODELS: &[&str] = &[
-            "gpt-5.5",
-            "claude-opus-4-7",
-            "moonshotai/kimi-k2.6",
-            "moonshotai/kimi-k2.5",
-        ];
+        fn normalize_provider_label(value: &str) -> String {
+            value
+                .trim()
+                .to_ascii_lowercase()
+                .replace([' ', '_', '-'], "")
+        }
+
+        fn route_matches_recent_auth(route_provider: &str, login_provider: &str) -> bool {
+            let route = normalize_provider_label(route_provider);
+            let login = normalize_provider_label(login_provider);
+            if route == login || route.contains(&login) || login.contains(&route) {
+                return true;
+            }
+            matches!(
+                (login.as_str(), route.as_str()),
+                ("claude" | "anthropic", "anthropic" | "claude")
+                    | ("openai", "openai")
+                    | ("gemini" | "google", "gemini" | "google")
+                    | ("antigravity", "antigravity")
+                    | ("copilot" | "copilotcode", "copilot")
+                    | ("cursor", "cursor")
+                    | ("openrouter", "openrouter" | "auto")
+            )
+        }
+
+        const RECOMMENDED_MODELS: &[&str] =
+            &["gpt-5.5", "claude-opus-4-7", "deepseek/deepseek-v4-pro"];
 
         const CLAUDE_OAUTH_ONLY_MODELS: &[&str] = &["claude-opus-4-7"];
 
         const OPENAI_OAUTH_ONLY_MODELS: &[&str] =
             &["gpt-5.5", "gpt-5.4", "gpt-5.4[1m]", "gpt-5.4-pro"];
         const COPILOT_OAUTH_MODELS: &[&str] = &["claude-opus-4.7", "gpt-5.5", "gpt-5.4"];
+        const OPENROUTER_AUTO_ONLY_MODELS: &[&str] = &["deepseek/deepseek-v4-pro"];
 
         fn recommendation_rank(name: &str, recommended_models: &[&str]) -> usize {
             recommended_models
                 .iter()
                 .position(|model| *model == name)
                 .unwrap_or(usize::MAX)
+        }
+
+        fn route_can_be_recommended(model: &str, route: &PickerOption) -> bool {
+            if model == "deepseek/deepseek-v4-pro" {
+                return route.api_method == "openrouter" && route.provider == "auto";
+            }
+            matches!(
+                route.api_method.as_str(),
+                "claude-oauth" | "openai-oauth" | "openai-api-key" | "copilot"
+            ) || (route.api_method == "openrouter" && route.provider == "auto")
         }
 
         let timestamp_started = std::time::Instant::now();
@@ -555,12 +641,38 @@ impl App {
         }
 
         let is_openai = !available_efforts.is_empty();
+        let recent_auth_provider = self
+            .recent_authenticated_provider
+            .as_ref()
+            .map(|(provider, _)| provider.as_str());
 
         let entries_started = std::time::Instant::now();
         let mut entries: Vec<PickerEntry> = Vec::new();
         for name in &model_order {
             let mut entry_routes = model_options.remove(name).unwrap_or_default();
             entry_routes.sort_by_key(route_sort_key);
+            let recently_authenticated = recent_auth_provider
+                .map(|provider| {
+                    entry_routes
+                        .iter()
+                        .any(|route| route_matches_recent_auth(&route.provider, provider))
+                })
+                .unwrap_or(false);
+            if recently_authenticated {
+                for route in &mut entry_routes {
+                    if recent_auth_provider
+                        .map(|provider| route_matches_recent_auth(&route.provider, provider))
+                        .unwrap_or(false)
+                        && !route.detail.contains("recently added")
+                    {
+                        route.detail = if route.detail.trim().is_empty() {
+                            "recently added".to_string()
+                        } else {
+                            format!("recently added · {}", route.detail)
+                        };
+                    }
+                }
+            }
 
             let is_openai_model = crate::provider::ALL_OPENAI_MODELS.contains(&name.as_str());
 
@@ -578,64 +690,78 @@ impl App {
                     let is_this_current =
                         *name == current_model && current_effort.as_deref() == Some(*effort);
                     let or_created = openrouter_created_timestamp(name);
-                    entries.push(PickerEntry {
-                        name: display_name,
-                        options: entry_routes.clone(),
-                        action: PickerAction::Model,
-                        selected_option: 0,
-                        is_current: is_this_current,
-                        recommended: RECOMMENDED_MODELS.contains(&name.as_str())
-                            && (*effort == "xhigh" || *effort == "high")
-                            && (!(CLAUDE_OAUTH_ONLY_MODELS.contains(&name.as_str())
-                                || OPENAI_OAUTH_ONLY_MODELS.contains(&name.as_str())
-                                || COPILOT_OAUTH_MODELS.contains(&name.as_str()))
-                                || entry_routes.iter().any(|r| {
-                                    (r.api_method == "claude-oauth"
-                                        || r.api_method == "openai-oauth"
-                                        || r.api_method == "copilot")
-                                        && r.available
-                                })),
-                        recommendation_rank: recommendation_rank(name, RECOMMENDED_MODELS),
-                        old: old_threshold_secs > 0
-                            && or_created.map(|t| t < old_threshold_secs).unwrap_or(false),
-                        created_date: or_created.map(format_created),
-                        effort: Some(effort.to_string()),
-                        is_default: is_config_default(name),
-                    });
+                    for route in &entry_routes {
+                        entries.push(PickerEntry {
+                            name: display_name.clone(),
+                            options: vec![route.clone()],
+                            action: PickerAction::Model,
+                            selected_option: 0,
+                            is_current: is_this_current,
+                            recommended: RECOMMENDED_MODELS.contains(&name.as_str())
+                                && (*effort == "xhigh" || *effort == "high")
+                                && (!(CLAUDE_OAUTH_ONLY_MODELS.contains(&name.as_str())
+                                    || OPENAI_OAUTH_ONLY_MODELS.contains(&name.as_str())
+                                    || COPILOT_OAUTH_MODELS.contains(&name.as_str())
+                                    || OPENROUTER_AUTO_ONLY_MODELS.contains(&name.as_str()))
+                                    || (route_can_be_recommended(name, route) && route.available)),
+                            recommendation_rank: recommendation_rank(name, RECOMMENDED_MODELS),
+                            old: old_threshold_secs > 0
+                                && or_created.map(|t| t < old_threshold_secs).unwrap_or(false),
+                            created_date: or_created.map(format_created),
+                            effort: Some(effort.to_string()),
+                            is_default: is_config_default(name),
+                        });
+                    }
                 }
             } else {
                 let or_created = openrouter_created_timestamp(name);
                 let is_old = old_threshold_secs > 0
                     && or_created.map(|t| t < old_threshold_secs).unwrap_or(false);
-                let is_recommended = RECOMMENDED_MODELS.contains(&name.as_str())
-                    && (!(CLAUDE_OAUTH_ONLY_MODELS.contains(&name.as_str())
-                        || OPENAI_OAUTH_ONLY_MODELS.contains(&name.as_str())
-                        || COPILOT_OAUTH_MODELS.contains(&name.as_str()))
-                        || entry_routes.iter().any(|r| {
-                            (r.api_method == "claude-oauth"
-                                || r.api_method == "openai-oauth"
-                                || r.api_method == "copilot")
-                                && r.available
-                        }));
-                entries.push(PickerEntry {
-                    name: name.clone(),
-                    options: entry_routes,
-                    action: PickerAction::Model,
-                    selected_option: 0,
-                    is_current: *name == current_model,
-                    recommended: is_recommended,
-                    recommendation_rank: recommendation_rank(name, RECOMMENDED_MODELS),
-                    old: is_old,
-                    created_date: or_created.map(format_created),
-                    effort: None,
-                    is_default: is_config_default(name),
-                });
+                for route in entry_routes {
+                    let is_recommended = RECOMMENDED_MODELS.contains(&name.as_str())
+                        && (!(CLAUDE_OAUTH_ONLY_MODELS.contains(&name.as_str())
+                            || OPENAI_OAUTH_ONLY_MODELS.contains(&name.as_str())
+                            || COPILOT_OAUTH_MODELS.contains(&name.as_str())
+                            || OPENROUTER_AUTO_ONLY_MODELS.contains(&name.as_str()))
+                            || (route_can_be_recommended(name, &route) && route.available));
+                    entries.push(PickerEntry {
+                        name: name.clone(),
+                        options: vec![route],
+                        action: PickerAction::Model,
+                        selected_option: 0,
+                        is_current: *name == current_model,
+                        recommended: is_recommended,
+                        recommendation_rank: recommendation_rank(name, RECOMMENDED_MODELS),
+                        old: is_old,
+                        created_date: or_created.map(format_created),
+                        effort: None,
+                        is_default: is_config_default(name),
+                    });
+                }
             }
         }
 
         entries.sort_by(|a, b| {
             let a_current = if a.is_current { 0u8 } else { 1 };
             let b_current = if b.is_current { 0u8 } else { 1 };
+            let a_recent = if a
+                .options
+                .iter()
+                .any(|option| option.detail.contains("recently added"))
+            {
+                0u8
+            } else {
+                1
+            };
+            let b_recent = if b
+                .options
+                .iter()
+                .any(|option| option.detail.contains("recently added"))
+            {
+                0u8
+            } else {
+                1
+            };
             let a_rec = if a.recommended { 0u8 } else { 1 };
             let b_rec = if b.recommended { 0u8 } else { 1 };
             let a_rec_rank = if a.recommended {
@@ -662,11 +788,22 @@ impl App {
             let b_old = if b.old { 1u8 } else { 0 };
             a_current
                 .cmp(&b_current)
+                .then(a_recent.cmp(&b_recent))
                 .then(a_rec.cmp(&b_rec))
                 .then(a_rec_rank.cmp(&b_rec_rank))
                 .then(a_avail.cmp(&b_avail))
                 .then(a_old.cmp(&b_old))
                 .then(a.name.cmp(&b.name))
+                .then_with(|| {
+                    a.active_option()
+                        .map(|route| route.provider.as_str())
+                        .cmp(&b.active_option().map(|route| route.provider.as_str()))
+                })
+                .then_with(|| {
+                    a.active_option()
+                        .map(|route| route.api_method.as_str())
+                        .cmp(&b.active_option().map(|route| route.api_method.as_str()))
+                })
         });
         let entries_ms = entries_started.elapsed().as_millis();
         let total_ms = picker_started.elapsed().as_millis();
@@ -757,6 +894,24 @@ impl App {
             let openrouter_cached = openrouter_catalog_model
                 .as_deref()
                 .and_then(crate::provider::openrouter::load_endpoints_disk_cache_public);
+
+            if crate::provider::bedrock::BedrockProvider::is_bedrock_model_id(model) {
+                let available = auth.bedrock != crate::auth::AuthState::NotConfigured
+                    || crate::provider::bedrock::BedrockProvider::has_credentials();
+                routes.push(crate::provider::ModelRoute {
+                    model: model.clone(),
+                    provider: "AWS Bedrock".to_string(),
+                    api_method: "bedrock".to_string(),
+                    available,
+                    detail: if available {
+                        String::new()
+                    } else {
+                        "no Bedrock credentials or region; run /login bedrock".to_string()
+                    },
+                    cheapness: None,
+                });
+                continue;
+            }
 
             if model.contains('/') {
                 let cached = openrouter_cached;
@@ -866,6 +1021,11 @@ impl App {
                 }
             }
 
+            if let Some(route) = Self::remote_openai_compatible_route_for_model(model) {
+                routes.push(route);
+                added_any = true;
+            }
+
             if Self::remote_model_should_offer_copilot_route(model) && !model.contains("[1m]") {
                 routes.push(crate::provider::build_copilot_route(
                     model,
@@ -876,13 +1036,25 @@ impl App {
                 added_any = true;
             }
 
+            if crate::provider::gemini::is_gemini_model_id(model) {
+                routes.push(crate::provider::ModelRoute {
+                    model: model.clone(),
+                    provider: "Gemini".to_string(),
+                    api_method: "code-assist-oauth".to_string(),
+                    available: auth.gemini == crate::auth::AuthState::Available,
+                    detail: String::new(),
+                    cheapness: None,
+                });
+                added_any = true;
+            }
+
             if !added_any {
                 routes.push(crate::provider::ModelRoute {
                     model: model.clone(),
                     provider: "unknown".to_string(),
                     api_method: "unknown".to_string(),
                     available: false,
-                    detail: String::new(),
+                    detail: "no matching configured provider route".to_string(),
                     cheapness: None,
                 });
             }
@@ -891,13 +1063,44 @@ impl App {
     }
 
     pub(super) fn remote_model_should_offer_copilot_route(model: &str) -> bool {
-        Self::remote_model_is_server_copilot_only(model)
-            || crate::provider::copilot::is_known_display_model(model)
+        Self::remote_openai_compatible_route_for_model(model).is_none()
+            && (Self::remote_model_is_server_copilot_only(model)
+                || crate::provider::copilot::is_known_display_model(model))
+    }
+
+    pub(super) fn remote_openai_compatible_route_for_model(
+        model: &str,
+    ) -> Option<crate::provider::ModelRoute> {
+        for profile in crate::provider_catalog::openai_compatible_profiles()
+            .iter()
+            .copied()
+        {
+            if !crate::provider_catalog::openai_compatible_profile_is_configured(profile) {
+                continue;
+            }
+            if !crate::provider_catalog::openai_compatible_profile_static_models(profile)
+                .iter()
+                .any(|candidate| candidate == model)
+            {
+                continue;
+            }
+            let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
+            return Some(crate::provider::ModelRoute {
+                model: model.to_string(),
+                provider: resolved.display_name,
+                api_method: format!("openai-compatible:{}", resolved.id),
+                available: true,
+                detail: resolved.api_base,
+                cheapness: None,
+            });
+        }
+        None
     }
 
     pub(super) fn remote_model_is_server_copilot_only(model: &str) -> bool {
         !model.is_empty()
             && !model.contains('/')
+            && Self::remote_openai_compatible_route_for_model(model).is_none()
             && !matches!(
                 crate::provider::provider_for_model(model),
                 Some("claude" | "openai" | "gemini" | "cursor")
@@ -1581,6 +1784,8 @@ impl App {
                             format!("copilot:{}", bare_name)
                         } else if r.api_method == "cursor" {
                             format!("cursor:{}", bare_name)
+                        } else if r.api_method == "bedrock" {
+                            format!("bedrock:{}", bare_name)
                         } else if r.provider == "Antigravity" {
                             format!("antigravity:{}", bare_name)
                         } else if openai_compatible_profile_id_for_route(r).is_some() {
@@ -1601,9 +1806,10 @@ impl App {
                             {
                                 Some("claude")
                             }
-                            "openai-oauth" => Some("openai"),
+                            "openai-oauth" | "openai-api-key" => Some("openai"),
                             "copilot" => Some("copilot"),
                             "cursor" => Some("cursor"),
+                            "bedrock" => Some("bedrock"),
                             "cli" if r.provider == "Antigravity" => Some("antigravity"),
                             "openrouter" => Some("openrouter"),
                             method if method.starts_with("openai-compatible") => {
@@ -1759,6 +1965,7 @@ impl App {
                             "Model → {} via {} ({})",
                             entry.name, route.provider, route.api_method
                         );
+                        let route_detail = route.detail.trim().to_string();
 
                         if self.is_remote {
                             self.inline_interactive_state = None;
@@ -1788,7 +1995,17 @@ impl App {
                         if let Some(effort) = effort {
                             let _ = self.provider.set_reasoning_effort(&effort);
                         }
-                        self.set_status_notice(notice);
+                        if !route_detail.is_empty() {
+                            self.push_display_message(DisplayMessage::system(format!(
+                                "{}\n{}",
+                                notice, route_detail
+                            )));
+                        }
+                        self.set_status_notice(if route_detail.is_empty() {
+                            notice
+                        } else {
+                            format!("{} · {}", notice, route_detail)
+                        });
                     }
                 }
             }

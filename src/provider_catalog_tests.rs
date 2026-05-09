@@ -91,6 +91,9 @@ fn auth_issue_profile_metadata_matches_direct_provider_endpoints() {
     assert_eq!(DEEPSEEK_PROFILE.api_base, "https://api.deepseek.com");
     assert_eq!(DEEPSEEK_PROFILE.default_model, Some("deepseek-v4-flash"));
     assert_eq!(DEEPSEEK_PROFILE.setup_url, "https://api-docs.deepseek.com/");
+    assert_eq!(COMTEGRA_PROFILE.api_base, "https://llm.comtegra.cloud/v1");
+    assert_eq!(COMTEGRA_PROFILE.default_model, Some("glm-51-nvfp4"));
+    assert_eq!(COMTEGRA_PROFILE.api_key_env, "COMTEGRA_API_KEY");
     assert!(!OPENAI_COMPAT_PROFILE.setup_url.contains("opencode.ai"));
 }
 
@@ -146,12 +149,26 @@ fn matrix_tui_login_selection_supports_numbers_and_names() {
         Some("claude")
     );
     assert_eq!(
-        resolve_login_selection("15", &providers).map(|provider| provider.id),
-        Some("cursor")
+        resolve_login_selection("6", &providers).map(|provider| provider.id),
+        Some("bedrock")
     );
     assert_eq!(
         resolve_login_selection("compat", &providers).map(|provider| provider.id),
         Some("openai-compatible")
+    );
+    assert_eq!(
+        resolve_login_selection("cgc", &providers).map(|provider| provider.id),
+        Some("comtegra")
+    );
+    assert_eq!(
+        resolve_login_selection("bedrock", &providers).map(|provider| provider.id),
+        Some("bedrock")
+    );
+    assert!(
+        providers
+            .iter()
+            .take(6)
+            .any(|provider| provider.id == "bedrock")
     );
     assert!(resolve_login_selection("google", &providers).is_none());
 }
@@ -177,15 +194,21 @@ fn matrix_cli_login_selection_preserves_existing_order() {
     );
     assert_eq!(
         resolve_login_selection("7", &providers).map(|provider| provider.id),
+        Some("bedrock")
+    );
+    assert_eq!(
+        resolve_login_selection("8", &providers).map(|provider| provider.id),
         Some("azure")
     );
     assert_eq!(
-        resolve_login_selection("17", &providers).map(|provider| provider.id),
-        Some("gemini")
+        resolve_login_selection("bedrock", &providers).map(|provider| provider.id),
+        Some("bedrock")
     );
-    assert_eq!(
-        resolve_login_selection("18", &providers).map(|provider| provider.id),
-        Some("google")
+    assert!(
+        providers
+            .iter()
+            .position(|provider| provider.id == "bedrock")
+            < providers.iter().position(|provider| provider.id == "azure")
     );
 }
 

@@ -53,14 +53,19 @@ impl App {
 
         self.queued_messages = queued_messages;
         if self.has_queued_followups() {
-            self.is_processing = true;
-            self.status = ProcessingStatus::Sending;
-            if self.processing_started.is_none() {
-                self.processing_started = Some(Instant::now());
-            }
             if self.is_remote {
-                self.pending_queued_dispatch = true;
+                // Do not synthesize a processing turn for restored remote follow-ups.
+                // After a reload, the server may still be running the previous turn;
+                // the queue must remain a wait-until-turn-end queue until the history
+                // bootstrap/Done event proves the remote turn is idle. The remote
+                // post-connect/history/tick paths will dispatch once it is safe.
+                self.set_status_notice("Restored queued follow-up after reload");
             } else {
+                self.is_processing = true;
+                self.status = ProcessingStatus::Sending;
+                if self.processing_started.is_none() {
+                    self.processing_started = Some(Instant::now());
+                }
                 self.pending_turn = true;
             }
         }
@@ -77,6 +82,14 @@ impl App {
     }
 
     pub(super) fn schedule_pending_remote_retry(&mut self, reason: &str) -> bool {
+        self.schedule_pending_remote_retry_with_limit(reason, Self::AUTO_RETRY_MAX_ATTEMPTS)
+    }
+
+    pub(super) fn schedule_pending_remote_retry_with_limit(
+        &mut self,
+        reason: &str,
+        max_attempts: u8,
+    ) -> bool {
         let Some(pending) = self.rate_limit_pending_message.as_mut() else {
             return false;
         };
@@ -85,7 +98,7 @@ impl App {
         }
         let outcome = {
             let current_attempts = pending.retry_attempts;
-            if current_attempts >= Self::AUTO_RETRY_MAX_ATTEMPTS {
+            if current_attempts >= max_attempts {
                 Err(current_attempts)
             } else {
                 pending.retry_attempts += 1;
@@ -117,7 +130,7 @@ impl App {
                     backoff_secs,
                     if backoff_secs == 1 { "" } else { "s" },
                     retry_attempts,
-                    Self::AUTO_RETRY_MAX_ATTEMPTS
+                    max_attempts
                 )));
                 true
             }
@@ -173,7 +186,12 @@ impl App {
         });
 
         crate::logging::info("App::new_minimal_with_session: skipping skill/prompt bootstrap");
-        crate::telemetry::begin_session(provider.name(), &provider.model());
+        crate::telemetry::begin_session_with_parent(
+            provider.name(),
+            &provider.model(),
+            session.parent_id.clone(),
+            false,
+        );
 
         let mut app = Self {
             provider,
@@ -247,6 +265,7 @@ impl App {
             last_turn_input_tokens: None,
             pending_turn: false,
             auto_poke_incomplete_todos: true,
+            overnight_auto_poke: None,
             pending_provider_failover: None,
             session_save_pending: false,
             streaming_tool_calls: Vec::new(),
@@ -302,6 +321,7 @@ impl App {
             remote_server_icon: None,
             current_message_id: None,
             is_remote: false,
+            runtime_mode: AppRuntimeMode::TestHarness,
             pending_remote_rewind_notice: None,
             server_spawning: false,
             is_replay: false,
@@ -348,6 +368,7 @@ impl App {
             diagram_pane_dragging: false,
             diff_pane_scroll: 0,
             diff_pane_scroll_x: 0,
+            side_panel_image_zoom_percent: 100,
             diff_pane_focus: false,
             diff_pane_auto_scroll: true,
             side_panel: crate::side_panel::SidePanelSnapshot::default(),
@@ -374,6 +395,7 @@ impl App {
             inline_interactive_state: None,
             model_picker_cache: None,
             model_picker_catalog_revision: 0,
+            recent_authenticated_provider: None,
             pending_model_picker_load: None,
             model_picker_load_request_id: 0,
             pending_model_switch: None,
@@ -526,7 +548,12 @@ impl App {
             t_prompt.as_secs_f64() * 1000.0,
         ));
 
-        crate::telemetry::begin_session(provider.name(), &provider.model());
+        crate::telemetry::begin_session_with_parent(
+            provider.name(),
+            &provider.model(),
+            session.parent_id.clone(),
+            false,
+        );
 
         let mut app = Self {
             provider,
@@ -600,6 +627,7 @@ impl App {
             last_turn_input_tokens: None,
             pending_turn: false,
             auto_poke_incomplete_todos: true,
+            overnight_auto_poke: None,
             pending_provider_failover: None,
             session_save_pending: false,
             streaming_tool_calls: Vec::new(),
@@ -655,6 +683,7 @@ impl App {
             remote_server_icon: None,
             current_message_id: None,
             is_remote: false,
+            runtime_mode: AppRuntimeMode::TestHarness,
             pending_remote_rewind_notice: None,
             server_spawning: false,
             is_replay: false,
@@ -701,6 +730,7 @@ impl App {
             diagram_pane_dragging: false,
             diff_pane_scroll: 0,
             diff_pane_scroll_x: 0,
+            side_panel_image_zoom_percent: 100,
             diff_pane_focus: false,
             diff_pane_auto_scroll: true,
             side_panel: crate::side_panel::SidePanelSnapshot::default(),
@@ -727,6 +757,7 @@ impl App {
             inline_interactive_state: None,
             model_picker_cache: None,
             model_picker_catalog_revision: 0,
+            recent_authenticated_provider: None,
             pending_model_picker_load: None,
             model_picker_load_request_id: 0,
             pending_model_switch: None,
@@ -805,6 +836,14 @@ impl App {
             app.status_notice = Some((notice, Instant::now()));
         }
 
+        app
+    }
+
+    pub fn new_for_test_harness(provider: Arc<dyn Provider>, registry: Registry) -> Self {
+        let mut app = Self::new(provider, registry);
+        app.runtime_mode = AppRuntimeMode::TestHarness;
+        app.is_remote = false;
+        app.is_replay = false;
         app
     }
 
@@ -895,7 +934,8 @@ impl App {
     }
 
     pub fn new_for_remote_with_options(resume_session: Option<String>, fresh_spawn: bool) -> Self {
-        let provider: Arc<dyn Provider> = Arc::new(NullProvider);
+        let provider: Arc<dyn Provider> =
+            Arc::new(InertRuntimeProvider::new(AppRuntimeMode::RemoteClient));
         let registry = Registry::empty();
         let session = resume_session
             .as_ref()
@@ -903,6 +943,7 @@ impl App {
             .unwrap_or_else(|| Session::create(None, None));
         let mut app = Self::new_minimal_with_session(provider, registry, session);
         app.is_remote = true;
+        app.runtime_mode = AppRuntimeMode::RemoteClient;
         app.remote_startup_phase = Some(super::RemoteStartupPhase::Connecting);
         app.remote_startup_phase_started = Some(Instant::now());
 
@@ -918,12 +959,6 @@ impl App {
             }
             if let Some(restored) = Self::restore_input_for_reload(session_id) {
                 app.apply_restored_reload_input(restored);
-                if app.has_queued_followups() {
-                    app.pending_queued_dispatch = true;
-                    if app.processing_started.is_none() {
-                        app.processing_started = Some(Instant::now());
-                    }
-                }
             }
         }
 

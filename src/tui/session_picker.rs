@@ -4,10 +4,11 @@
 //! conversation on the right. Sessions are grouped by server for multi-server support.
 
 use super::color_support::rgb;
-use crate::session::{CrashedSessionsInfo, Session, SessionStatus};
+use crate::session::{CrashedSessionsInfo, Session};
 use crate::tui::{DisplayMessage, markdown};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use jcode_session_types::SessionStatus;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -19,6 +20,11 @@ use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::time::Duration;
 
+pub use jcode_tui_session_picker::{
+    PickerItem, PreviewMessage, ResumeTarget, ServerGroup, SessionFilterMode, SessionInfo,
+    SessionSource,
+};
+
 mod filter;
 mod loading;
 mod memory;
@@ -28,121 +34,9 @@ mod render;
 #[cfg(test)]
 use loading::collect_recent_session_stems;
 use loading::{build_messages_preview, build_search_index, crashed_sessions_from_all_sessions};
-pub use loading::{load_servers, load_sessions, load_sessions_grouped};
-
-/// Session info for display
-#[derive(Clone)]
-pub struct SessionInfo {
-    pub id: String,
-    pub parent_id: Option<String>,
-    pub short_name: String,
-    pub icon: String,
-    pub title: String,
-    pub message_count: usize,
-    pub user_message_count: usize,
-    pub assistant_message_count: usize,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub last_message_time: chrono::DateTime<chrono::Utc>,
-    pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub working_dir: Option<String>,
-    pub model: Option<String>,
-    pub provider_key: Option<String>,
-    pub is_canary: bool,
-    pub is_debug: bool,
-    pub saved: bool,
-    pub save_label: Option<String>,
-    pub status: SessionStatus,
-    pub needs_catchup: bool,
-    pub estimated_tokens: usize,
-    pub messages_preview: Vec<PreviewMessage>,
-    /// Lowercased searchable text used by picker filtering
-    pub search_index: String,
-    /// Server name this session belongs to (if running)
-    pub server_name: Option<String>,
-    /// Server icon
-    pub server_icon: Option<String>,
-    /// Human/session source classification shown in the UI.
-    pub source: SessionSource,
-    /// How this entry should be resumed when selected.
-    pub resume_target: ResumeTarget,
-    /// Backing external transcript/storage path when available.
-    pub external_path: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SessionSource {
-    Jcode,
-    ClaudeCode,
-    Codex,
-    Pi,
-    OpenCode,
-}
-
-impl SessionSource {
-    pub fn badge(self) -> Option<&'static str> {
-        match self {
-            Self::Jcode => None,
-            Self::ClaudeCode => Some("🧵 Claude Code"),
-            Self::Codex => Some("🧠 Codex"),
-            Self::Pi => Some("π Pi"),
-            Self::OpenCode => Some("◌ OpenCode"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResumeTarget {
-    JcodeSession {
-        session_id: String,
-    },
-    ClaudeCodeSession {
-        session_id: String,
-        session_path: String,
-    },
-    CodexSession {
-        session_id: String,
-        session_path: String,
-    },
-    PiSession {
-        session_path: String,
-    },
-    OpenCodeSession {
-        session_id: String,
-        session_path: String,
-    },
-}
-
-impl ResumeTarget {
-    pub fn stable_id(&self) -> &str {
-        match self {
-            Self::JcodeSession { session_id } => session_id,
-            Self::ClaudeCodeSession { session_id, .. } => session_id,
-            Self::CodexSession { session_id, .. } => session_id,
-            Self::PiSession { session_path } => session_path,
-            Self::OpenCodeSession { session_id, .. } => session_id,
-        }
-    }
-}
-
-/// A group of sessions under a server
-#[derive(Clone)]
-pub struct ServerGroup {
-    pub name: String,
-    pub icon: String,
-    pub version: String,
-    pub git_hash: String,
-    pub is_running: bool,
-    pub sessions: Vec<SessionInfo>,
-}
-
-#[derive(Clone)]
-pub struct PreviewMessage {
-    pub role: String,
-    pub content: String,
-    pub tool_calls: Vec<String>,
-    pub tool_data: Option<crate::message::ToolCall>,
-    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
-}
+pub use loading::{
+    invalidate_session_list_cache, load_servers, load_sessions, load_sessions_grouped,
+};
 
 const SEARCH_CONTENT_BUDGET_BYTES: usize = 12_000;
 const DEFAULT_SESSION_SCAN_LIMIT: usize = 100;
@@ -217,76 +111,9 @@ enum PaneFocus {
     Preview,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SessionFilterMode {
-    All,
-    CatchUp,
-    Saved,
-    ClaudeCode,
-    Codex,
-    Pi,
-    OpenCode,
-}
-
-impl SessionFilterMode {
-    fn next(self) -> Self {
-        match self {
-            Self::All => Self::CatchUp,
-            Self::CatchUp => Self::Saved,
-            Self::Saved => Self::ClaudeCode,
-            Self::ClaudeCode => Self::Codex,
-            Self::Codex => Self::Pi,
-            Self::Pi => Self::OpenCode,
-            Self::OpenCode => Self::All,
-        }
-    }
-
-    fn previous(self) -> Self {
-        match self {
-            Self::All => Self::OpenCode,
-            Self::CatchUp => Self::All,
-            Self::Saved => Self::CatchUp,
-            Self::ClaudeCode => Self::Saved,
-            Self::Codex => Self::ClaudeCode,
-            Self::Pi => Self::Codex,
-            Self::OpenCode => Self::Pi,
-        }
-    }
-
-    fn label(self) -> Option<&'static str> {
-        match self {
-            Self::All => None,
-            Self::CatchUp => Some("⏭ catch up"),
-            Self::Saved => Some("📌 saved"),
-            Self::ClaudeCode => Some("🧵 Claude Code"),
-            Self::Codex => Some("🧠 Codex"),
-            Self::Pi => Some("π Pi"),
-            Self::OpenCode => Some("◌ OpenCode"),
-        }
-    }
-}
-
 const PREVIEW_SCROLL_STEP: u16 = 3;
 const PREVIEW_PAGE_SCROLL: u16 = PREVIEW_SCROLL_STEP * 3;
 const SESSION_PAGE_STEP_COUNT: usize = 3;
-
-/// An item in the picker list - either a server header or a session
-#[derive(Clone)]
-pub enum PickerItem {
-    ServerHeader {
-        name: String,
-        icon: String,
-        version: String,
-        session_count: usize,
-    },
-    Session,
-    OrphanHeader {
-        session_count: usize,
-    },
-    SavedHeader {
-        session_count: usize,
-    },
-}
 
 /// Interactive session picker
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

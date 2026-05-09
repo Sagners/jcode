@@ -159,6 +159,9 @@ pub(super) fn parse_rate_limit_error(error: &str) -> Option<Duration> {
 }
 
 pub(super) fn is_context_limit_error(error: &str) -> bool {
+    if crate::provider::openai_request::is_openai_encrypted_content_too_large_error(error) {
+        return true;
+    }
     let lower = error.to_lowercase();
     lower.contains("context length")
         || lower.contains("context window")
@@ -460,16 +463,15 @@ pub(super) fn spawn_resume_target_in_new_terminal(
 }
 
 fn resumed_window_title(session_id: &str) -> String {
-    let session_name = crate::id::extract_session_name(session_id)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| session_id.to_string());
+    let session_name = crate::process_title::session_name(session_id);
     let icon = crate::id::session_icon(&session_name);
+    let session_label = crate::process_title::terminal_session_label_for_id(session_id);
     if let Some(server_info) =
         crate::registry::find_server_by_socket_sync(&crate::server::socket_path())
     {
-        format!("{} jcode/{} {}", icon, server_info.name, session_name)
+        format!("{} jcode/{} {}", icon, server_info.name, session_label)
     } else {
-        format!("{} jcode {}", icon, session_name)
+        format!("{} jcode {}", icon, session_label)
     }
 }
 

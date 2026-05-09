@@ -12,12 +12,29 @@ use crate::session::{Session, StoredMessage, session_journal_path_from_snapshot}
 use crate::storage;
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
+use jcode_import_core::{
+    ExternalMessageRecord, ExternalSessionRecord, ImportCoreResult, collect_recent_files_recursive,
+    load_claude_external_messages, load_codex_external_session, load_opencode_external_session,
+    load_pi_external_session,
+};
+use jcode_session_types::{
+    SessionSearchContextLine as ResultContextLine, SessionSearchQueryProfile as QueryProfile,
+    SessionSearchRenderOptions, SessionSearchReport as SearchReport,
+    SessionSearchResult as SearchResult, SessionSearchResultKind as SearchResultKind,
+    format_session_search_no_results, format_session_search_results,
+    score_session_search_text_match as score_message_match,
+    session_search_datetime_matches as session_datetime_matches,
+    session_search_field_filter_matches as field_filter_matches,
+    session_search_format_datetime as format_datetime,
+    session_search_path_matches_query as path_matches_query,
+    session_search_raw_matches_query as raw_matches_query,
+    session_search_truncate_title_text as truncate_title_text,
+    session_search_working_dir_matches as working_dir_matches,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -181,86 +198,6 @@ impl RoleFilter {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SearchResultKind {
-    Metadata,
-    Message,
-}
-
-impl SearchResultKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Metadata => "metadata",
-            Self::Message => "message",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SearchResult {
-    source: String,
-    session_id: String,
-    short_name: Option<String>,
-    title: Option<String>,
-    working_dir: Option<String>,
-    provider_key: Option<String>,
-    model: Option<String>,
-    updated_at: DateTime<Utc>,
-    kind: SearchResultKind,
-    role: String,
-    message_index: Option<usize>,
-    message_id: Option<String>,
-    message_timestamp: Option<DateTime<Utc>>,
-    snippet: String,
-    score: f64,
-    matched_terms: Vec<String>,
-    exact_match: bool,
-    context: Vec<ResultContextLine>,
-}
-
-#[derive(Debug, Clone)]
-struct ResultContextLine {
-    message_index: usize,
-    role: String,
-    timestamp: Option<DateTime<Utc>>,
-    text: String,
-}
-
-#[derive(Debug, Clone)]
-struct ExternalSessionRecord {
-    source: &'static str,
-    session_id: String,
-    short_name: Option<String>,
-    title: Option<String>,
-    working_dir: Option<String>,
-    provider_key: Option<String>,
-    model: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    path: PathBuf,
-    messages: Vec<ExternalMessageRecord>,
-}
-
-#[derive(Debug, Clone)]
-struct ExternalMessageRecord {
-    role: String,
-    text: String,
-    timestamp: Option<DateTime<Utc>>,
-    id: Option<String>,
-}
-
-#[derive(Debug, Default)]
-struct SearchReport {
-    results: Vec<SearchResult>,
-    scanned_jcode_sessions: usize,
-    candidate_jcode_sessions: usize,
-    scanned_external_sessions: usize,
-    external_sources: Vec<&'static str>,
-    read_errors: usize,
-    parse_errors: usize,
-    truncated: bool,
-}
-
 #[derive(Debug, Clone)]
 struct SessionFileCandidate {
     snapshot_path: PathBuf,
@@ -279,42 +216,6 @@ struct RawFilterOutcome {
 struct SearchWorkerOutcome {
     results: Vec<SearchResult>,
     parse_errors: usize,
-}
-
-#[derive(Debug, Clone)]
-struct QueryProfile {
-    normalized: String,
-    terms: Vec<String>,
-    min_term_matches: usize,
-}
-
-impl QueryProfile {
-    fn new(query: &str) -> Self {
-        let normalized = query.trim().to_lowercase();
-        let terms = tokenize_query(&normalized);
-        let min_term_matches = minimum_term_matches(terms.len());
-        Self {
-            normalized,
-            terms,
-            min_term_matches,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.normalized.is_empty()
-    }
-
-    fn is_actionable(&self) -> bool {
-        !self.is_empty() && !self.terms.is_empty()
-    }
-}
-
-#[derive(Debug)]
-struct MatchScore {
-    snippet: String,
-    score: f64,
-    matched_terms: Vec<String>,
-    exact_match: bool,
 }
 
 #[async_trait]
@@ -860,7 +761,7 @@ fn search_external_sessions(query: &QueryProfile, options: &SearchOptions) -> Se
             report.external_sources.push("claude");
             for session in sessions.into_iter().take(options.max_scan_sessions) {
                 let path = PathBuf::from(&session.full_path);
-                let messages = load_claude_external_messages(&path, options);
+                let messages = load_claude_external_messages(&path, options.include_tools);
                 let created_at = session.created.unwrap_or_else(Utc::now);
                 let updated_at = session.modified.or(session.created).unwrap_or(created_at);
                 let title = session
@@ -925,7 +826,7 @@ fn collect_external_jsonl_source(
     source: &'static str,
     root_relative: &str,
     options: &SearchOptions,
-    loader: fn(&Path, &SearchOptions) -> Result<Option<ExternalSessionRecord>>,
+    loader: fn(&Path, bool) -> ImportCoreResult<Option<ExternalSessionRecord>>,
 ) {
     if !source_matches_filter(source, options) {
         return;
@@ -938,7 +839,7 @@ fn collect_external_jsonl_source(
     }
     report.external_sources.push(source);
     for path in collect_recent_files_recursive(&root, "jsonl", options.max_scan_sessions) {
-        match loader(&path, options) {
+        match loader(&path, options.include_tools) {
             Ok(Some(record)) => records.push(record),
             Ok(None) => {}
             Err(_) => report.parse_errors += 1,
@@ -961,8 +862,17 @@ fn collect_opencode_external_sessions(
         return;
     }
     report.external_sources.push("opencode");
+    let Ok(messages_base) = crate::storage::user_home_path(".local/share/opencode/storage/message")
+    else {
+        return;
+    };
     for path in collect_recent_files_recursive(&root, "json", options.max_scan_sessions) {
-        match load_opencode_external_session(&path, options) {
+        match load_opencode_external_session(
+            &path,
+            &messages_base,
+            options.include_tools,
+            options.max_scan_sessions,
+        ) {
             Ok(Some(record)) => records.push(record),
             Ok(None) => {}
             Err(_) => report.parse_errors += 1,
@@ -989,7 +899,7 @@ fn append_external_session_results(
     }
 
     if role_filter_allows_metadata(options)
-        && datetime_matches(session.updated_at, options)
+        && session_datetime_matches(session.updated_at, options.after, options.before)
         && let Some(match_score) = score_message_match(&external_metadata_text(session), query)
     {
         results.push(SearchResult {
@@ -1018,7 +928,11 @@ fn append_external_session_results(
         if !role_filter_allows_external_message(&msg.role, options) {
             continue;
         }
-        if !datetime_matches(msg.timestamp.unwrap_or(session.updated_at), options) {
+        if !session_datetime_matches(
+            msg.timestamp.unwrap_or(session.updated_at),
+            options.after,
+            options.before,
+        ) {
             continue;
         }
         let Some(match_score) = score_message_match(&msg.text, query) else {
@@ -1094,442 +1008,6 @@ fn build_external_context(
         .collect()
 }
 
-fn collect_recent_files_recursive(root: &Path, extension: &str, limit: usize) -> Vec<PathBuf> {
-    fn walk(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, extension, out);
-            } else if path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case(extension))
-                .unwrap_or(false)
-            {
-                out.push(path);
-            }
-        }
-    }
-
-    let mut files = Vec::new();
-    walk(root, extension, &mut files);
-    files.sort_by(|a, b| modified_time_or_epoch(b).cmp(&modified_time_or_epoch(a)));
-    files.truncate(limit);
-    files
-}
-
-fn load_claude_external_messages(
-    path: &Path,
-    options: &SearchOptions,
-) -> Vec<ExternalMessageRecord> {
-    let Ok(file) = File::open(path) else {
-        return Vec::new();
-    };
-    BufReader::new(file)
-        .lines()
-        .map_while(|line| line.ok())
-        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-        .filter_map(|value| {
-            let entry_type = value
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if entry_type != "user" && entry_type != "assistant" {
-                return None;
-            }
-            let message = value.get("message")?;
-            let role = message
-                .get("role")
-                .and_then(|v| v.as_str())
-                .unwrap_or(entry_type)
-                .to_string();
-            let text = extract_external_text(
-                message.get("content").unwrap_or(&Value::Null),
-                options.include_tools,
-            );
-            if text.trim().is_empty() {
-                return None;
-            }
-            Some(ExternalMessageRecord {
-                role,
-                text,
-                timestamp: parse_timestamp_value(value.get("timestamp")),
-                id: value
-                    .get("uuid")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-            })
-        })
-        .collect()
-}
-
-fn load_codex_external_session(
-    path: &Path,
-    options: &SearchOptions,
-) -> Result<Option<ExternalSessionRecord>> {
-    let file = File::open(path)?;
-    let mut lines = BufReader::new(file).lines();
-    let Some(first_line) = lines.next() else {
-        return Ok(None);
-    };
-    let header: Value = serde_json::from_str(&first_line?)?;
-    let meta = if header.get("type").and_then(|v| v.as_str()) == Some("session_meta") {
-        header.get("payload").unwrap_or(&header)
-    } else {
-        &header
-    };
-    let session_id = meta.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-    if session_id.is_empty() {
-        return Ok(None);
-    }
-    let created_at = parse_timestamp_value(meta.get("timestamp"))
-        .or_else(|| parse_timestamp_value(header.get("timestamp")))
-        .unwrap_or_else(Utc::now);
-    let mut updated_at = modified_datetime(path).unwrap_or(created_at);
-    let working_dir = meta.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
-    let mut messages = Vec::new();
-    for line in lines.map_while(|line| line.ok()) {
-        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
-            continue;
-        };
-        let line_type = value
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let (role, content_value) = if line_type == "message" {
-            let Some(role) = value.get("role").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            (role, value.get("content").unwrap_or(&Value::Null))
-        } else if line_type == "response_item" {
-            let Some(payload) = value.get("payload") else {
-                continue;
-            };
-            if payload.get("type").and_then(|v| v.as_str()) != Some("message") {
-                continue;
-            }
-            let Some(role) = payload.get("role").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            (role, payload.get("content").unwrap_or(&Value::Null))
-        } else {
-            continue;
-        };
-        if role != "user" && role != "assistant" {
-            continue;
-        }
-        let text = extract_external_text(content_value, options.include_tools);
-        if text.trim().is_empty() {
-            continue;
-        }
-        let timestamp = parse_timestamp_value(value.get("timestamp"));
-        if let Some(ts) = timestamp {
-            updated_at = updated_at.max(ts);
-        }
-        messages.push(ExternalMessageRecord {
-            role: role.to_string(),
-            text,
-            timestamp,
-            id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
-        });
-    }
-    Ok(Some(ExternalSessionRecord {
-        source: "codex",
-        session_id: session_id.to_string(),
-        short_name: Some(format!("codex {}", &session_id[..session_id.len().min(8)])),
-        title: Some(format!(
-            "Codex session {}",
-            &session_id[..session_id.len().min(8)]
-        )),
-        working_dir,
-        provider_key: Some("openai-codex".to_string()),
-        model: None,
-        created_at,
-        updated_at,
-        path: path.to_path_buf(),
-        messages,
-    }))
-}
-
-fn load_pi_external_session(
-    path: &Path,
-    options: &SearchOptions,
-) -> Result<Option<ExternalSessionRecord>> {
-    let file = File::open(path)?;
-    let mut lines = BufReader::new(file).lines();
-    let Some(first_line) = lines.next() else {
-        return Ok(None);
-    };
-    let header: Value = serde_json::from_str(&first_line?)?;
-    if header.get("type").and_then(|v| v.as_str()) != Some("session") {
-        return Ok(None);
-    }
-    let session_id = header
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    if session_id.is_empty() {
-        return Ok(None);
-    }
-    let created_at = parse_timestamp_value(header.get("timestamp")).unwrap_or_else(Utc::now);
-    let mut updated_at = modified_datetime(path).unwrap_or(created_at);
-    let working_dir = header
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let mut provider_key = Some("pi".to_string());
-    let mut model = None;
-    let mut messages = Vec::new();
-    for line in lines.map_while(|line| line.ok()) {
-        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
-            continue;
-        };
-        if let Some(ts) = parse_timestamp_value(value.get("timestamp")) {
-            updated_at = updated_at.max(ts);
-        }
-        match value.get("type").and_then(|v| v.as_str()) {
-            Some("model_change") => {
-                provider_key = value
-                    .get("provider")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .or(provider_key);
-                model = value
-                    .get("modelId")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .or(model);
-            }
-            Some("message") => {
-                let Some(message) = value.get("message") else {
-                    continue;
-                };
-                let role = message
-                    .get("role")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                if role != "user" && role != "assistant" {
-                    continue;
-                }
-                let text = extract_external_text(
-                    message.get("content").unwrap_or(&Value::Null),
-                    options.include_tools,
-                );
-                if text.trim().is_empty() {
-                    continue;
-                }
-                messages.push(ExternalMessageRecord {
-                    role: role.to_string(),
-                    text,
-                    timestamp: parse_timestamp_value(value.get("timestamp")),
-                    id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
-                });
-            }
-            _ => {}
-        }
-    }
-    Ok(Some(ExternalSessionRecord {
-        source: "pi",
-        session_id: session_id.to_string(),
-        short_name: Some(format!("pi {}", &session_id[..session_id.len().min(8)])),
-        title: Some(format!(
-            "Pi session {}",
-            &session_id[..session_id.len().min(8)]
-        )),
-        working_dir,
-        provider_key,
-        model,
-        created_at,
-        updated_at,
-        path: path.to_path_buf(),
-        messages,
-    }))
-}
-
-fn load_opencode_external_session(
-    path: &Path,
-    options: &SearchOptions,
-) -> Result<Option<ExternalSessionRecord>> {
-    let value: Value = serde_json::from_reader(File::open(path)?)?;
-    let session_id = value.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-    if session_id.is_empty() {
-        return Ok(None);
-    }
-    let created_at = value
-        .get("time")
-        .and_then(|time| time.get("created"))
-        .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
-        .unwrap_or_else(Utc::now);
-    let updated_at = value
-        .get("time")
-        .and_then(|time| time.get("updated"))
-        .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
-        .or_else(|| modified_datetime(path))
-        .unwrap_or(created_at);
-    let working_dir = value
-        .get("directory")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let title = value
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(|title| truncate_title_text(title, 72))
-        .unwrap_or_else(|| {
-            format!(
-                "OpenCode session {}",
-                &session_id[..session_id.len().min(8)]
-            )
-        });
-    let messages_root = crate::storage::user_home_path(format!(
-        ".local/share/opencode/storage/message/{}",
-        session_id
-    ))?;
-    let mut provider_key = Some("opencode".to_string());
-    let mut model = None;
-    let mut messages = Vec::new();
-    if messages_root.exists() {
-        for msg_path in
-            collect_recent_files_recursive(&messages_root, "json", options.max_scan_sessions)
-        {
-            let Ok(msg_value) = serde_json::from_reader::<_, Value>(File::open(&msg_path)?) else {
-                continue;
-            };
-            let role = msg_value
-                .get("role")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if role != "user" && role != "assistant" {
-                continue;
-            }
-            if model.is_none() {
-                model = msg_value
-                    .get("modelID")
-                    .or_else(|| msg_value.get("model").and_then(|m| m.get("modelID")))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
-            }
-            provider_key = msg_value
-                .get("providerID")
-                .or_else(|| msg_value.get("model").and_then(|m| m.get("providerID")))
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .or(provider_key);
-            let text = msg_value
-                .get("summary")
-                .or_else(|| msg_value.get("content"))
-                .map(|value| extract_external_text(value, options.include_tools))
-                .unwrap_or_default();
-            if text.trim().is_empty() {
-                continue;
-            }
-            messages.push(ExternalMessageRecord {
-                role: role.to_string(),
-                text,
-                timestamp: None,
-                id: msg_value
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-            });
-        }
-    }
-    Ok(Some(ExternalSessionRecord {
-        source: "opencode",
-        session_id: session_id.to_string(),
-        short_name: Some(format!(
-            "opencode {}",
-            &session_id[..session_id.len().min(8)]
-        )),
-        title: Some(title),
-        working_dir,
-        provider_key,
-        model,
-        created_at,
-        updated_at,
-        path: path.to_path_buf(),
-        messages,
-    }))
-}
-
-fn extract_external_text(value: &Value, include_tools: bool) -> String {
-    fn visit(value: &Value, include_tools: bool, out: &mut Vec<String>) {
-        match value {
-            Value::String(text) => {
-                if !text.trim().is_empty() {
-                    out.push(text.trim().to_string());
-                }
-            }
-            Value::Array(items) => {
-                for item in items {
-                    visit(item, include_tools, out);
-                }
-            }
-            Value::Object(map) => {
-                let block_type = map.get("type").and_then(|v| v.as_str()).unwrap_or_default();
-                if !include_tools
-                    && matches!(block_type, "tool_use" | "tool_result" | "function_call")
-                {
-                    return;
-                }
-                if let Some(text) = map.get("text").and_then(|v| v.as_str()) {
-                    if !text.trim().is_empty() {
-                        out.push(text.trim().to_string());
-                    }
-                } else if include_tools
-                    && let Some(content) = map.get("content").and_then(|v| v.as_str())
-                    && !content.trim().is_empty()
-                {
-                    out.push(content.trim().to_string());
-                }
-                for (key, nested) in map {
-                    if matches!(key.as_str(), "type" | "text" | "content") {
-                        continue;
-                    }
-                    visit(nested, include_tools, out);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut out = Vec::new();
-    visit(value, include_tools, &mut out);
-    out.join("\n")
-}
-
-fn parse_timestamp_value(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(|v| v.as_str())
-        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-}
-
-fn modified_datetime(path: &Path) -> Option<DateTime<Utc>> {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .map(DateTime::<Utc>::from)
-}
-
-fn truncate_title_text(text: &str, max_chars: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= max_chars {
-        trimmed.to_string()
-    } else {
-        format!(
-            "{}…",
-            trimmed
-                .chars()
-                .take(max_chars.saturating_sub(1))
-                .collect::<String>()
-        )
-    }
-}
-
 fn append_session_results(
     results: &mut Vec<SearchResult>,
     session: &Session,
@@ -1553,14 +1031,14 @@ fn append_session_results(
     }
 
     if role_filter_allows_metadata(options)
-        && datetime_matches(session.updated_at, options)
+        && session_datetime_matches(session.updated_at, options.after, options.before)
         && let Some(match_score) = score_message_match(&metadata_text(session), query)
     {
         results.push(SearchResult {
             source: "jcode".to_string(),
             session_id: session.id.clone(),
             short_name: session.short_name.clone(),
-            title: session.title.clone(),
+            title: session.display_title().map(ToOwned::to_owned),
             working_dir: session.working_dir.clone(),
             provider_key: session.provider_key.clone(),
             model: session.model.clone(),
@@ -1588,7 +1066,11 @@ fn append_session_results(
         if !role_filter_allows_message(msg, options) {
             continue;
         }
-        if !datetime_matches(msg.timestamp.unwrap_or(session.updated_at), options) {
+        if !session_datetime_matches(
+            msg.timestamp.unwrap_or(session.updated_at),
+            options.after,
+            options.before,
+        ) {
             continue;
         }
 
@@ -1610,7 +1092,7 @@ fn append_session_results(
             source: "jcode".to_string(),
             session_id: session.id.clone(),
             short_name: session.short_name.clone(),
-            title: session.title.clone(),
+            title: session.display_title().map(ToOwned::to_owned),
             working_dir: session.working_dir.clone(),
             provider_key: session.provider_key.clone(),
             model: session.model.clone(),
@@ -1639,8 +1121,14 @@ fn metadata_text(session: &Session) -> String {
     if let Some(short_name) = &session.short_name {
         fields.push(format!("Short name: {short_name}"));
     }
-    if let Some(title) = &session.title {
+    if let Some(title) = session.display_title() {
         fields.push(format!("Title: {title}"));
+    }
+    if let Some(generated_title) = &session.title
+        && session.custom_title.is_some()
+        && Some(generated_title.as_str()) != session.display_title()
+    {
+        fields.push(format!("Generated title: {generated_title}"));
     }
     if let Some(working_dir) = &session.working_dir {
         fields.push(format!("Working directory: {working_dir}"));
@@ -1724,25 +1212,6 @@ fn provider_matches(provider_key: Option<&str>, source: &str, options: &SearchOp
         return true;
     };
     field_filter_matches(provider_key, Some(filter)) || source.to_ascii_lowercase().contains(filter)
-}
-
-fn field_filter_matches(value: Option<&str>, filter: Option<&str>) -> bool {
-    let Some(filter) = filter else {
-        return true;
-    };
-    value
-        .map(|value| value.to_ascii_lowercase().contains(filter))
-        .unwrap_or(false)
-}
-
-fn datetime_matches(value: DateTime<Utc>, options: &SearchOptions) -> bool {
-    if options.after.is_some_and(|after| value < after) {
-        return false;
-    }
-    if options.before.is_some_and(|before| value > before) {
-        return false;
-    }
-    true
 }
 
 fn role_filter_allows_metadata(options: &SearchOptions) -> bool {
@@ -1878,219 +1347,6 @@ fn role_label(msg: &StoredMessage) -> &'static str {
     }
 }
 
-fn score_message_match(text: &str, query: &QueryProfile) -> Option<MatchScore> {
-    if !query.is_actionable() {
-        return None;
-    }
-
-    let text_lower = text.to_lowercase();
-    let exact_pos = (!query.normalized.is_empty())
-        .then(|| text_lower.find(&query.normalized))
-        .flatten();
-
-    let mut matched_terms = Vec::new();
-    let mut total_term_hits = 0usize;
-    let mut first_term_pos = None;
-
-    for term in &query.terms {
-        if let Some(pos) = text_lower.find(term) {
-            matched_terms.push(term.clone());
-            total_term_hits += text_lower.matches(term).count();
-            first_term_pos = Some(first_term_pos.map_or(pos, |current: usize| current.min(pos)));
-        }
-    }
-
-    if exact_pos.is_none() && matched_terms.len() < query.min_term_matches {
-        return None;
-    }
-
-    let anchor = exact_pos.or(first_term_pos);
-    let snippet = extract_snippet(text, anchor, query, 280);
-    let coverage = matched_terms.len() as f64 / query.terms.len() as f64;
-    let score = if exact_pos.is_some() { 4.0 } else { 0.0 }
-        + coverage * 3.0
-        + matched_terms.len() as f64 * 0.25
-        + (total_term_hits as f64 / (text.len() as f64 + 1.0)) * 200.0;
-
-    Some(MatchScore {
-        snippet,
-        score,
-        matched_terms,
-        exact_match: exact_pos.is_some(),
-    })
-}
-
-fn raw_matches_query(raw: &[u8], query: &QueryProfile) -> bool {
-    if !query.is_actionable() {
-        return false;
-    }
-
-    if query.normalized.is_ascii() {
-        if contains_case_insensitive_bytes(raw, query.normalized.as_bytes()) {
-            return true;
-        }
-        let matched_terms = query
-            .terms
-            .iter()
-            .filter(|term| contains_case_insensitive_bytes(raw, term.as_bytes()))
-            .count();
-        return matched_terms >= query.min_term_matches;
-    }
-
-    let Ok(raw_text) = std::str::from_utf8(raw) else {
-        return false;
-    };
-    normalized_text_matches(&raw_text.to_lowercase(), query)
-}
-
-fn path_matches_query(path_text: &str, query: &QueryProfile) -> bool {
-    normalized_text_matches(&path_text.to_lowercase(), query)
-}
-
-fn normalized_text_matches(text_lower: &str, query: &QueryProfile) -> bool {
-    if !query.is_actionable() {
-        return false;
-    }
-    if text_lower.contains(&query.normalized) {
-        return true;
-    }
-    query
-        .terms
-        .iter()
-        .filter(|term| text_lower.contains(term.as_str()))
-        .count()
-        >= query.min_term_matches
-}
-
-fn tokenize_query(query: &str) -> Vec<String> {
-    let mut terms = Vec::new();
-    let mut seen = HashSet::new();
-
-    for token in query.split(|c: char| !c.is_alphanumeric()) {
-        if token.is_empty() {
-            continue;
-        }
-
-        let token = token.to_lowercase();
-        if is_stop_word(&token) {
-            continue;
-        }
-
-        let keep = token.chars().count() >= 2 || token.chars().all(|c| c.is_ascii_digit());
-        if keep && seen.insert(token.clone()) {
-            terms.push(token);
-        }
-    }
-
-    terms
-}
-
-fn is_stop_word(token: &str) -> bool {
-    matches!(
-        token,
-        "a" | "an"
-            | "and"
-            | "are"
-            | "as"
-            | "at"
-            | "be"
-            | "but"
-            | "by"
-            | "for"
-            | "from"
-            | "how"
-            | "i"
-            | "in"
-            | "into"
-            | "is"
-            | "it"
-            | "my"
-            | "of"
-            | "on"
-            | "or"
-            | "our"
-            | "that"
-            | "the"
-            | "their"
-            | "this"
-            | "to"
-            | "we"
-            | "what"
-            | "when"
-            | "where"
-            | "which"
-            | "with"
-            | "you"
-            | "your"
-    )
-}
-
-fn minimum_term_matches(term_count: usize) -> usize {
-    match term_count {
-        0 => 0,
-        1 => 1,
-        2 => 2,
-        3..=5 => 2,
-        _ => 3,
-    }
-}
-
-/// Fast case-insensitive byte search. Avoids allocating a lowercase copy of the
-/// entire file for the common ASCII-query case.
-fn contains_case_insensitive_bytes(haystack: &[u8], needle_lower: &[u8]) -> bool {
-    if needle_lower.is_empty() {
-        return true;
-    }
-    if haystack.len() < needle_lower.len() {
-        return false;
-    }
-    let end = haystack.len() - needle_lower.len();
-    'outer: for i in 0..=end {
-        for (j, &nb) in needle_lower.iter().enumerate() {
-            let hb = haystack[i + j];
-            let hb_lower = if hb.is_ascii_uppercase() {
-                hb | 0x20
-            } else {
-                hb
-            };
-            if hb_lower != nb {
-                continue 'outer;
-            }
-        }
-        return true;
-    }
-    false
-}
-
-fn working_dir_matches(session_wd: &str, filter: &str) -> bool {
-    let session_norm = normalize_path_for_match(session_wd);
-    let filter_norm = normalize_path_for_match(filter);
-    if filter_norm.is_empty() {
-        return true;
-    }
-
-    if session_norm == filter_norm {
-        return true;
-    }
-
-    let filter_with_sep = format!("{filter_norm}/");
-    if session_norm.starts_with(&filter_with_sep) {
-        return true;
-    }
-
-    // If the user supplied only a project name or path fragment, keep substring
-    // matching as a fallback. This preserves the previous loose behavior while
-    // making absolute path filters deterministic above.
-    !filter_norm.contains('/') && session_norm.contains(&filter_norm)
-}
-
-fn normalize_path_for_match(path: &str) -> String {
-    path.trim()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_lowercase()
-}
-
 fn compare_results(a: &SearchResult, b: &SearchResult) -> std::cmp::Ordering {
     b.score
         .partial_cmp(&a.score)
@@ -2122,247 +1378,23 @@ fn group_and_limit_results(
     grouped
 }
 
-fn format_results(query: &str, report: &SearchReport, options: &SearchOptions) -> String {
-    let results = &report.results;
-    let mut output = format!(
-        "## Found {} results for '{}'\n\n",
-        results.len(),
-        query.trim()
-    );
-
-    output.push_str(&format!(
-        "_Defaults: current session {}, external sources {}, tool calls/results {}, system reminders {}. Max per session: {}._\n\n",
-        if options.include_current { "included" } else { "excluded" },
-        if options.include_external { "included" } else { "hidden" },
-        if options.include_tools { "included" } else { "hidden" },
-        if options.include_system { "included" } else { "hidden" },
-        options.max_per_session,
-    ));
-
-    output.push_str(&format!(
-        "_Scanned: {} Jcode sessions ({} candidates), {} external sessions{}{}._\n\n",
-        report.scanned_jcode_sessions,
-        report.candidate_jcode_sessions,
-        report.scanned_external_sessions,
-        if report.external_sources.is_empty() {
-            String::new()
-        } else {
-            format!(" from {}", report.external_sources.join(", "))
-        },
-        if report.truncated {
-            "; scan truncated"
-        } else {
-            ""
-        },
-    ));
-
-    for (i, result) in results.iter().enumerate() {
-        let session_name = result
-            .short_name
-            .as_deref()
-            .or(result.title.as_deref())
-            .unwrap_or(&result.session_id);
-        output.push_str(&format!("### Result {} - {}\n", i + 1, session_name));
-        output.push_str(&format!("- Source: `{}`\n", result.source));
-        output.push_str(&format!("- Session ID: `{}`\n", result.session_id));
-        if let Some(title) = &result.title {
-            output.push_str(&format!("- Title: {}\n", title));
-        }
-        if let Some(dir) = &result.working_dir {
-            output.push_str(&format!("- Working dir: `{}`\n", dir));
-        }
-        if let Some(provider_key) = &result.provider_key {
-            output.push_str(&format!("- Provider: `{}`\n", provider_key));
-        }
-        if let Some(model) = &result.model {
-            output.push_str(&format!("- Model: `{}`\n", model));
-        }
-        output.push_str(&format!(
-            "- Updated: {}\n- Match: {}",
-            format_datetime(result.updated_at),
-            result.kind.label(),
-        ));
-        if let Some(index) = result.message_index {
-            output.push_str(&format!(" #{}", index + 1));
-        }
-        output.push_str(&format!(" ({})", result.role));
-        if let Some(message_id) = &result.message_id {
-            output.push_str(&format!(", id `{}`", message_id));
-        }
-        if let Some(timestamp) = result.message_timestamp {
-            output.push_str(&format!(", at {}", format_datetime(timestamp)));
-        }
-        output.push('\n');
-        output.push_str(&format!(
-            "- Why: {}{}\n",
-            if result.exact_match {
-                "exact phrase; "
-            } else {
-                ""
-            },
-            format_matched_terms(&result.matched_terms),
-        ));
-        output.push_str("\n");
-        output.push_str(&markdown_code_block(&result.snippet));
-        if !result.context.is_empty() {
-            output.push_str("\n\nContext:\n");
-            for context in &result.context {
-                output.push_str(&format!(
-                    "- #{} {}{}\n",
-                    context.message_index + 1,
-                    context.role,
-                    context
-                        .timestamp
-                        .map(|ts| format!(" at {}", format_datetime(ts)))
-                        .unwrap_or_default()
-                ));
-                output.push_str(&markdown_code_block(&context.text));
-                output.push('\n');
-            }
-        }
-        output.push_str("\n\n");
+fn render_options(options: &SearchOptions) -> SessionSearchRenderOptions {
+    SessionSearchRenderOptions {
+        include_current: options.include_current,
+        include_external: options.include_external,
+        include_tools: options.include_tools,
+        include_system: options.include_system,
+        max_per_session: options.max_per_session,
+        has_working_dir_filter: options.working_dir_filter.is_some(),
     }
+}
 
-    output
+fn format_results(query: &str, report: &SearchReport, options: &SearchOptions) -> String {
+    format_session_search_results(query, report, &render_options(options))
 }
 
 fn no_results_message(query: &str, options: &SearchOptions) -> String {
-    let mut output = format!("No results found for '{}' in past sessions.", query.trim());
-    let mut hints = Vec::new();
-    if !options.include_current {
-        hints.push(
-            "current session is excluded by default; retry with include_current=true if needed",
-        );
-    }
-    if !options.include_tools {
-        hints.push(
-            "tool calls/results are hidden by default; retry with include_tools=true for raw logs",
-        );
-    }
-    if !options.include_system {
-        hints.push("system reminders are hidden by default; retry with include_system=true for internal context");
-    }
-    if options.working_dir_filter.is_some() {
-        hints.push("the working_dir filter may be too narrow");
-    }
-    if !hints.is_empty() {
-        output.push_str("\n\nSearch notes:\n");
-        for hint in hints {
-            output.push_str("- ");
-            output.push_str(hint);
-            output.push('\n');
-        }
-    }
-    output
-}
-
-fn format_matched_terms(terms: &[String]) -> String {
-    if terms.is_empty() {
-        return "matched exact phrase".to_string();
-    }
-    let rendered = terms
-        .iter()
-        .take(8)
-        .map(|term| format!("`{term}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if terms.len() > 8 {
-        format!("matched terms {rendered}, ...")
-    } else {
-        format!("matched terms {rendered}")
-    }
-}
-
-fn format_datetime(ts: DateTime<Utc>) -> String {
-    ts.to_rfc3339_opts(SecondsFormat::Secs, true)
-}
-
-fn markdown_code_block(text: &str) -> String {
-    let longest_backtick_run = longest_repeated_char_run(text, '`');
-    let fence_len = if longest_backtick_run >= 3 {
-        longest_backtick_run + 1
-    } else {
-        3
-    };
-    let fence = "`".repeat(fence_len);
-    format!("{fence}text\n{text}\n{fence}")
-}
-
-fn longest_repeated_char_run(text: &str, needle: char) -> usize {
-    let mut longest = 0;
-    let mut current = 0;
-    for ch in text.chars() {
-        if ch == needle {
-            current += 1;
-            longest = longest.max(current);
-        } else {
-            current = 0;
-        }
-    }
-    longest
-}
-
-/// Extract a snippet around the first match.
-fn extract_snippet(
-    text: &str,
-    anchor: Option<usize>,
-    query: &QueryProfile,
-    max_len: usize,
-) -> String {
-    if let Some(pos) = anchor {
-        let focus_len = if !query.normalized.is_empty() {
-            query.normalized.len()
-        } else {
-            query.terms.first().map(|term| term.len()).unwrap_or(0)
-        };
-        let start = pos.saturating_sub(max_len / 2);
-        let end = (pos + focus_len + max_len / 2).min(text.len());
-
-        let start = floor_char_boundary(text, start);
-        let end = ceil_char_boundary(text, end);
-
-        let start = text[..start]
-            .rfind(char::is_whitespace)
-            .map(|p| p + 1)
-            .unwrap_or(start);
-        let end = text[end..]
-            .find(char::is_whitespace)
-            .map(|p| end + p)
-            .unwrap_or(end);
-
-        let mut snippet = text[start..end].to_string();
-        if start > 0 {
-            snippet = format!("...{}", snippet);
-        }
-        if end < text.len() {
-            snippet = format!("{}...", snippet);
-        }
-        snippet
-    } else {
-        text.chars().take(max_len).collect()
-    }
-}
-
-fn floor_char_boundary(s: &str, i: usize) -> usize {
-    if i >= s.len() {
-        return s.len();
-    }
-    let mut idx = i;
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
-}
-
-fn ceil_char_boundary(s: &str, i: usize) -> usize {
-    if i >= s.len() {
-        return s.len();
-    }
-    let mut idx = i;
-    while idx < s.len() && !s.is_char_boundary(idx) {
-        idx += 1;
-    }
-    idx
+    format_session_search_no_results(query, &render_options(options))
 }
 
 #[cfg(test)]

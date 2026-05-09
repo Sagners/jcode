@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use super::args::{
     AmbientCommand, Args, AuthCommand, Command, MemoryCommand, ModelCommand, ProviderCommand,
-    RestartCommand, TranscriptModeArg,
+    RestartCommand, SessionCommand, TranscriptModeArg,
 };
 use crate::{
     agent, auth, build, provider, provider_catalog, server, session, setup_hints, startup_profile,
@@ -201,6 +201,14 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Memory(subcmd)) => {
             commands::run_memory_command(map_memory_subcommand(subcmd))?;
         }
+        Some(Command::Session(subcmd)) => match subcmd {
+            SessionCommand::Rename {
+                session,
+                name,
+                clear,
+                json,
+            } => commands::run_session_rename_command(&session, name.as_deref(), clear, json)?,
+        },
         Some(Command::Ambient(subcmd)) => {
             commands::run_ambient_command(map_ambient_subcommand(subcmd)).await?;
         }
@@ -385,11 +393,6 @@ fn map_transcript_mode(mode: TranscriptModeArg) -> crate::protocol::TranscriptMo
 }
 
 async fn run_default_command(args: Args) -> Result<()> {
-    // `Args::standalone` remains temporarily deprecated for compatibility while
-    // we continue surfacing the migration warning and behavior below.
-    #[allow(deprecated)]
-    let standalone = args.standalone;
-
     startup_profile::mark("run_main_none_branch");
 
     let explicit_provider_or_model = args.provider != ProviderChoice::Auto
@@ -419,7 +422,7 @@ async fn run_default_command(args: Args) -> Result<()> {
     startup_profile::mark("is_jcode_repo");
     let already_in_selfdev = crate::cli::selfdev::client_selfdev_requested();
 
-    if in_jcode_repo && !already_in_selfdev && !standalone && !args.no_selfdev {
+    if in_jcode_repo && !already_in_selfdev && !args.no_selfdev {
         output::stderr_info("📍 Detected jcode repository - enabling self-dev mode");
         output::stderr_info("   Using shared server with self-dev session mode");
         output::stderr_info("   (use --no-selfdev to disable auto-detection)");
@@ -427,27 +430,6 @@ async fn run_default_command(args: Args) -> Result<()> {
 
         crate::env::set_var(selfdev::CLIENT_SELFDEV_ENV, "1");
         crate::process_title::set_initial_title(&args);
-    }
-
-    if standalone {
-        output::stderr_info(
-            "\x1b[33m⚠️  Warning: --standalone is deprecated and will be removed in a future version.\x1b[0m",
-        );
-        output::stderr_info(
-            "\x1b[33m   The default server/client mode now handles all use cases including self-dev.\x1b[0m\n",
-        );
-        let (provider, registry) =
-            provider_init::init_provider_and_registry(&args.provider, args.model.as_deref())
-                .await?;
-        tui_launch::run_tui(
-            provider,
-            registry,
-            args.resume,
-            args.debug_socket,
-            startup_hints,
-        )
-        .await?;
-        return Ok(());
     }
 
     startup_profile::mark("client_mode_start");
@@ -672,25 +654,18 @@ pub(crate) async fn maybe_prompt_server_bootstrap_login(
     provider_choice: &ProviderChoice,
 ) -> Result<()> {
     startup_profile::mark("cred_check_start");
-    let (has_claude, has_openai) = tokio::join!(
-        tokio::task::spawn_blocking(|| auth::claude::load_credentials().is_ok()),
-        tokio::task::spawn_blocking(|| auth::codex::load_credentials().is_ok()),
-    );
-    let has_claude = has_claude.unwrap_or(false);
-    let has_openai = has_openai.unwrap_or(false);
-    let has_openrouter = provider::openrouter::OpenRouterProvider::has_credentials();
-    let has_copilot = auth::copilot::has_copilot_credentials();
-    let has_api_key = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let mut cred_state = detect_bootstrap_credentials().await;
     startup_profile::mark("cred_check_done");
 
-    if !has_claude
-        && !has_openai
-        && !has_openrouter
-        && !has_copilot
-        && !has_api_key
-        && !auth::AuthStatus::has_any_untrusted_external_auth()
+    if !cred_state.has_any
+        && auth::AuthStatus::has_any_untrusted_external_auth()
         && *provider_choice == ProviderChoice::Auto
     {
+        let _ = provider_init::maybe_run_external_auth_auto_import_flow().await?;
+        cred_state = detect_bootstrap_credentials().await;
+    }
+
+    if !cred_state.has_any && *provider_choice == ProviderChoice::Auto {
         let provider = provider_init::prompt_login_provider_selection(
             &provider_catalog::server_bootstrap_login_providers(),
             "No credentials found. Let's log in!\n\nChoose a provider:",
@@ -701,6 +676,26 @@ pub(crate) async fn maybe_prompt_server_bootstrap_login(
     }
 
     Ok(())
+}
+
+struct BootstrapCredentialState {
+    has_any: bool,
+}
+
+async fn detect_bootstrap_credentials() -> BootstrapCredentialState {
+    let (has_claude, has_openai) = tokio::join!(
+        tokio::task::spawn_blocking(|| auth::claude::load_credentials().is_ok()),
+        tokio::task::spawn_blocking(|| auth::codex::load_credentials().is_ok()),
+    );
+    let has_claude = has_claude.unwrap_or(false);
+    let has_openai = has_openai.unwrap_or(false);
+    let has_openrouter = provider::openrouter::OpenRouterProvider::has_credentials();
+    let has_copilot = auth::copilot::has_copilot_credentials();
+    let has_api_key = std::env::var("ANTHROPIC_API_KEY").is_ok();
+
+    BootstrapCredentialState {
+        has_any: has_claude || has_openai || has_openrouter || has_copilot || has_api_key,
+    }
 }
 
 pub(crate) async fn spawn_server(
@@ -762,20 +757,46 @@ pub(crate) async fn spawn_server(
     }
     #[cfg(not(unix))]
     {
-        cmd.spawn()?;
+        use std::io::Read;
+
+        let mut child = cmd.spawn()?;
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_millis(500) {
+        let timeout = std::time::Duration::from_secs(5);
+        while start.elapsed() < timeout {
             if crate::transport::is_socket_path(&server::socket_path()) {
                 if crate::transport::Stream::connect(server::socket_path())
                     .await
                     .is_ok()
                 {
                     startup_profile::mark("server_ready");
-                    break;
+                    return Ok(());
                 }
             }
+
+            if let Some(status) = child.try_wait()? {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                let detail = stderr.trim();
+                if detail.is_empty() {
+                    anyhow::bail!("Server exited before becoming ready (status: {})", status);
+                }
+                anyhow::bail!(
+                    "Server exited before becoming ready (status: {}). {}",
+                    status,
+                    detail
+                );
+            }
+
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+
+        anyhow::bail!(
+            "Timed out waiting for server to become ready at {} after {}ms",
+            server::socket_path().display(),
+            timeout.as_millis()
+        );
     }
 
     Ok(())

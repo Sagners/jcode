@@ -128,7 +128,14 @@ async fn stream_response(
         .json(&request)
         .send()
         .await
-        .with_context(|| format!("Failed to send request using {}", auth.label()))?;
+        .with_context(|| {
+            format!(
+                "Failed to send OpenAI-compatible chat request\n  endpoint: {}\n  model: {}\n  auth: {}\nHint: check network connectivity, DNS/TLS, and that the base URL includes the API version (usually /v1).",
+                url,
+                model,
+                auth.label()
+            )
+        })?;
 
     let connect_ms = connect_start.elapsed().as_millis();
     crate::logging::info(&format!(
@@ -140,7 +147,14 @@ async fn stream_response(
     if !response.status().is_success() {
         let status = response.status();
         let body = crate::util::http_error_body(response, "HTTP error").await;
-        anyhow::bail!("API error ({}): {}", status, body);
+        anyhow::bail!(
+            "OpenAI-compatible chat request failed\n  endpoint: {}\n  model: {}\n  auth: {}\n  status: {}\n  response: {}\nHint: verify the selected model exists in `/models`, your key has access, and the endpoint supports POST /chat/completions with streaming.",
+            url,
+            model,
+            auth.label(),
+            status,
+            body
+        );
     }
 
     let _ = tx
@@ -156,11 +170,22 @@ async fn stream_response(
     loop {
         let event = match tokio::time::timeout(SSE_CHUNK_TIMEOUT, stream.next()).await {
             Ok(Some(Ok(event))) => event,
-            Ok(Some(Err(e))) => anyhow::bail!("Stream error: {}", e),
+            Ok(Some(Err(e))) => anyhow::bail!(
+                "OpenAI-compatible stream error\n  endpoint: {}\n  model: {}\n  auth: {}\n  error: {}",
+                url,
+                model,
+                auth.label(),
+                e
+            ),
             Ok(None) => break, // stream ended normally
             Err(_) => {
                 crate::logging::warn("OpenRouter SSE stream timed out (no data for 180s)");
-                anyhow::bail!("Stream read timeout: no data received for 180 seconds");
+                anyhow::bail!(
+                    "OpenAI-compatible stream timeout\n  endpoint: {}\n  model: {}\n  auth: {}\n  timeout: no data received for 180 seconds\nHint: the provider may not support streaming, the model may be overloaded, or the request may be stuck before emitting tokens.",
+                    url,
+                    model,
+                    auth.label()
+                );
             }
         };
         if tx.send(Ok(event)).await.is_err() {
@@ -330,8 +355,10 @@ impl OpenRouterStream {
                         None => continue,
                     };
 
-                    if let Some(reasoning_content) =
-                        delta.get("reasoning_content").and_then(|c| c.as_str())
+                    if let Some(reasoning_content) = delta
+                        .get("reasoning_content")
+                        .or_else(|| delta.get("reasoning"))
+                        .and_then(|c| c.as_str())
                         && !reasoning_content.is_empty()
                     {
                         self.pending
@@ -538,5 +565,21 @@ mod tests {
         assert!(event.is_none());
         assert!(stream.pending.is_empty());
         assert!(stream.current_tool_call.is_none());
+    }
+
+    #[test]
+    fn parse_next_event_accepts_reasoning_delta_alias() {
+        let provider_pin = Arc::new(std::sync::Mutex::new(None));
+        let mut stream = OpenRouterStream::new(
+            futures::stream::empty(),
+            "test-model".to_string(),
+            provider_pin,
+        );
+        stream.buffer =
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"thinking\"}}]}\n\n".to_string();
+
+        let event = stream.parse_next_event();
+
+        assert!(matches!(event, Some(StreamEvent::ThinkingDelta(text)) if text == "thinking"));
     }
 }

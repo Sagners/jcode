@@ -10,11 +10,15 @@ use super::{
 pub(super) struct SessionJournalMeta {
     pub(super) parent_id: Option<String>,
     pub(super) title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) custom_title: Option<String>,
     pub(super) updated_at: DateTime<Utc>,
     pub(super) compaction: Option<StoredCompactionState>,
     pub(super) provider_session_id: Option<String>,
     pub(super) provider_key: Option<String>,
     pub(super) model: Option<String>,
+    #[serde(default)]
+    pub(super) reasoning_effort: Option<String>,
     pub(super) subagent_model: Option<String>,
     pub(super) improve_mode: Option<SessionImproveMode>,
     pub(super) autoreview_enabled: Option<bool>,
@@ -72,7 +76,9 @@ pub(super) fn metadata_requires_snapshot(
 ) -> bool {
     prev.parent_id != current.parent_id
         || prev.title != current.title
+        || prev.custom_title != current.custom_title
         || prev.provider_key != current.provider_key
+        || prev.reasoning_effort != current.reasoning_effort
         || prev.subagent_model != current.subagent_model
         || prev.improve_mode != current.improve_mode
         || prev.autoreview_enabled != current.autoreview_enabled

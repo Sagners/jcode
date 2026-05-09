@@ -59,6 +59,28 @@ impl Agent {
         Ok(())
     }
 
+    pub fn restore_reasoning_effort_from_session(&mut self) {
+        if let Some(effort) = self.session.reasoning_effort.clone() {
+            if let Err(e) = self.provider.set_reasoning_effort(&effort) {
+                crate::logging::error(&format!(
+                    "Failed to restore session reasoning effort '{}': {}",
+                    effort, e
+                ));
+            }
+        } else {
+            self.session.reasoning_effort = self.provider.reasoning_effort();
+        }
+    }
+
+    pub fn set_reasoning_effort(&mut self, effort: &str) -> Result<Option<String>> {
+        self.provider.set_reasoning_effort(effort)?;
+        let current = self.provider.reasoning_effort();
+        self.session.reasoning_effort = current.clone();
+        self.log_env_snapshot("set_reasoning_effort");
+        self.session.save()?;
+        Ok(current)
+    }
+
     pub fn subagent_model(&self) -> Option<String> {
         self.session.subagent_model.clone()
     }
@@ -68,6 +90,13 @@ impl Agent {
         self.log_env_snapshot("set_subagent_model");
         self.session.save()?;
         Ok(())
+    }
+
+    pub fn rename_session_title(&mut self, title: Option<String>) -> Result<String> {
+        self.session.rename_title(title);
+        self.log_env_snapshot("rename_session");
+        self.session.save()?;
+        Ok(self.session.display_title_or_name().to_string())
     }
 
     pub fn autoreview_enabled(&self) -> Option<bool> {
@@ -98,6 +127,7 @@ impl Agent {
             return;
         }
         self.session.working_dir = Some(dir.to_string());
+        self.session.refresh_initial_session_context_message();
         self.log_env_snapshot("working_dir");
     }
 

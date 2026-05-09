@@ -31,7 +31,7 @@ pub(crate) enum ProviderAuthArg {
 #[command(version = env!("JCODE_VERSION"))]
 #[command(about = "J-Code: A coding agent using Claude Max or ChatGPT Pro subscriptions")]
 pub(crate) struct Args {
-    /// Provider to use (jcode, claude, openai, openrouter, azure, opencode, opencode-go, zai, 302ai, baseten, cortecs, deepseek, firmware, huggingface, moonshotai, nebius, scaleway, stackit, groq, mistral, perplexity, togetherai, deepinfra, xai, lmstudio, ollama, chutes, cerebras, alibaba-coding-plan, openai-compatible, cursor, copilot, gemini, antigravity, google, or auto-detect)
+    /// Provider to use (jcode, claude, openai, openai-api, openrouter, azure, opencode, opencode-go, zai, 302ai, baseten, cortecs, comtegra, deepseek, fpt, firmware, huggingface, moonshotai, nebius, scaleway, stackit, groq, mistral, perplexity, togetherai, deepinfra, xai, lmstudio, ollama, chutes, cerebras, alibaba-coding-plan, openai-compatible, cursor, copilot, gemini, antigravity, google, or auto-detect)
     #[arg(short, long, default_value = "auto", global = true)]
     pub(crate) provider: ProviderChoice,
 
@@ -62,14 +62,6 @@ pub(crate) struct Args {
     /// Internal: launched as a freshly spawned window, so skip heavy local resume bootstrap.
     #[arg(long, global = true, hide = true)]
     pub(crate) fresh_spawn: bool,
-
-    /// DEPRECATED: Run standalone TUI without connecting to server.
-    /// The default mode is now always client/server (even for self-dev).
-    /// Standalone mode is missing features like graceful cancel with partial
-    /// content preservation on the server side. Will be removed in a future version.
-    #[arg(long, global = true, hide = true)]
-    #[deprecated = "Use default client/server mode instead"]
-    pub(crate) standalone: bool,
 
     /// Disable auto-detection of jcode repository and self-dev mode
     #[arg(long, global = true)]
@@ -130,7 +122,7 @@ pub(crate) enum Command {
         message: String,
     },
 
-    /// Login to a provider via OAuth
+    /// Login to a provider via OAuth, API key, or local credentials
     Login {
         /// Account label for multi-account support (stored labels are auto-numbered)
         #[arg(long, short = 'a')]
@@ -239,6 +231,10 @@ pub(crate) enum Command {
     /// Memory management commands
     #[command(subcommand)]
     Memory(MemoryCommand),
+
+    /// Session management commands
+    #[command(subcommand)]
+    Session(SessionCommand),
 
     /// Ambient mode management
     #[command(subcommand)]
@@ -415,6 +411,27 @@ pub(crate) enum ModelCommand {
         /// Show provider/selection summary before the list
         #[arg(long)]
         verbose: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SessionCommand {
+    /// Rename a saved session's human-readable name/title
+    Rename {
+        /// Session ID or memorable short name, e.g. fox
+        session: String,
+
+        /// New session name/title
+        #[arg(required_unless_present = "clear")]
+        name: Option<String>,
+
+        /// Clear the custom session name/title
+        #[arg(long, conflicts_with = "name")]
+        clear: bool,
+
+        /// Emit JSON instead of human-readable output
+        #[arg(long)]
+        json: bool,
     },
 }
 

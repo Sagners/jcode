@@ -88,6 +88,78 @@ pub(super) fn disable_auto_poke(app: &mut App) -> usize {
     cleared
 }
 
+pub(super) fn is_non_retryable_auto_poke_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+
+    // These failures are deterministic for the current request/session shape. Retrying the same
+    // auto-poke cannot help and can create an infinite spam loop.
+    let deterministic_markers = [
+        "400 bad request",
+        "invalid_request_error",
+        "string_above_max_length",
+        "string_too_long",
+        "maximum length",
+        "request too large",
+        "payload too large",
+        "body too large",
+        "input too large",
+        "context length exceeded",
+        "context_length_exceeded",
+        "maximum context length",
+        "token limit exceeded",
+        "invalid model",
+        "model_not_found",
+        "model_not_supported",
+        "unsupported parameter",
+        "unsupported_value",
+        "invalid parameter",
+        "invalid schema",
+        "invalid tool",
+        "invalid image",
+        "image too large",
+        "unsupported image",
+        "unsupported file",
+        "file too large",
+        "content_policy_violation",
+        "safety_violation",
+        "permission_denied",
+        "unauthorized",
+        "401 unauthorized",
+        "403 forbidden",
+        "insufficient_quota",
+        "billing",
+        "credit balance",
+    ];
+
+    deterministic_markers
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+pub(super) fn stop_auto_poke_for_non_retryable_error(app: &mut App, error: &str) -> bool {
+    if !app.auto_poke_incomplete_todos || !is_non_retryable_auto_poke_error(error) {
+        return false;
+    }
+
+    let cleared = disable_auto_poke(app);
+    app.rate_limit_pending_message = None;
+    app.rate_limit_reset = None;
+    app.push_display_message(DisplayMessage::system(format!(
+        "🛑 Auto-poke stopped because the last request failed with a non-retryable error.{} Fix the request/session, then run `/poke` again if you want to resume.",
+        if cleared == 0 {
+            String::new()
+        } else {
+            format!(
+                " Cleared {} queued poke follow-up{}.",
+                cleared,
+                if cleared == 1 { "" } else { "s" }
+            )
+        }
+    )));
+    app.set_status_notice("Poke stopped: non-retryable error");
+    true
+}
+
 pub(super) fn poke_disabled_message(cleared: usize) -> String {
     format!(
         "Auto-poke disabled.{}",
@@ -1169,6 +1241,53 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
 
+    if trimmed == "/rename" || trimmed.starts_with("/rename ") {
+        let title = trimmed.strip_prefix("/rename").unwrap_or_default().trim();
+        if title.is_empty() {
+            app.push_display_message(DisplayMessage::error(
+                "Usage: `/rename <session name>` or `/rename --clear`".to_string(),
+            ));
+            return true;
+        }
+
+        if title == "--clear" {
+            app.session.rename_title(None);
+            if let Err(e) = app.session.save() {
+                app.push_display_message(DisplayMessage::error(format!(
+                    "Failed to clear session name: {}",
+                    e
+                )));
+                return true;
+            }
+            crate::tui::session_picker::invalidate_session_list_cache();
+            app.update_terminal_title();
+            let name = app.session.display_title_or_name().to_string();
+            app.push_display_message(DisplayMessage::system(format!(
+                "Cleared custom name. Session title is now **{}**.",
+                name,
+            )));
+            app.set_status_notice("Session name cleared");
+            return true;
+        }
+
+        app.session.rename_title(Some(title.to_string()));
+        if let Err(e) = app.session.save() {
+            app.push_display_message(DisplayMessage::error(format!(
+                "Failed to rename session: {}",
+                e
+            )));
+            return true;
+        }
+        crate::tui::session_picker::invalidate_session_list_cache();
+        app.update_terminal_title();
+        app.push_display_message(DisplayMessage::system(format!(
+            "Renamed session to **{}**.",
+            title,
+        )));
+        app.set_status_notice("Session renamed");
+        return true;
+    }
+
     if trimmed == "/memory status" {
         let default_enabled = crate::config::config().features.memory;
         app.push_display_message(DisplayMessage::system(format!(
@@ -1857,6 +1976,9 @@ pub(super) fn handle_config_command(app: &mut App, trimmed: &str) -> bool {
 
                 match manager.force_compact_with(&provider_messages, app.provider.clone()) {
                     Ok(()) => {
+                        app.set_status_notice(App::format_compaction_progress_notice(
+                            std::time::Duration::ZERO,
+                        ));
                         app.push_display_message(DisplayMessage {
                             role: "system".to_string(),
                             content: format!(
@@ -2039,59 +2161,18 @@ pub(super) fn handle_feedback_command(app: &mut App, trimmed: &str) -> bool {
         return false;
     };
 
-    let rest = rest.trim();
-    if rest.is_empty() {
+    let feedback = rest.trim();
+    if feedback.is_empty() {
         app.push_display_message(DisplayMessage::error(
-            "Usage: `/feedback <up|down> [wrong_answer|slow|bad_edit|auth_problem|tool_failure|crash|confusing_ux|other]`"
-                .to_string(),
+            "Usage: `/feedback <your feedback>`".to_string(),
         ));
         return true;
     }
 
-    let mut parts = rest.split_whitespace();
-    let rating = match parts.next().unwrap_or_default() {
-        "up" | "+" | "good" | "positive" => "up",
-        "down" | "-" | "bad" | "negative" => "down",
-        _ => {
-            app.push_display_message(DisplayMessage::error(
-                "Feedback rating must be `up` or `down`.".to_string(),
-            ));
-            return true;
-        }
-    };
-
-    let reason = parts
-        .next()
-        .map(|value| value.trim().to_ascii_lowercase().replace('-', "_"));
-    if let Some(reason) = reason.as_deref()
-        && !matches!(
-            reason,
-            "wrong_answer"
-                | "slow"
-                | "bad_edit"
-                | "auth_problem"
-                | "tool_failure"
-                | "crash"
-                | "confusing_ux"
-                | "other"
-        )
-    {
-        app.push_display_message(DisplayMessage::error(
-            "Feedback reason must be one of: wrong_answer, slow, bad_edit, auth_problem, tool_failure, crash, confusing_ux, other"
-                .to_string(),
-        ));
-        return true;
-    }
-
-    crate::telemetry::record_feedback(rating, reason.as_deref());
-    let detail = reason
-        .as_deref()
-        .map(|value| format!(" ({value})"))
-        .unwrap_or_default();
-    app.push_display_message(DisplayMessage::system(format!(
-        "Thanks, recorded feedback: **{}**{}.",
-        rating, detail
-    )));
+    crate::telemetry::record_feedback(feedback);
+    app.push_display_message(DisplayMessage::system(
+        "Thanks, recorded your feedback.".to_string(),
+    ));
     app.set_status_notice("Feedback recorded");
     true
 }

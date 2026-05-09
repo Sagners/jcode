@@ -52,12 +52,34 @@ fn pad_center_display(text: &str, width: usize) -> String {
 }
 
 fn api_method_display(raw: &str) -> &str {
-    raw.split_once(':').map(|(method, _)| method).unwrap_or(raw)
+    match raw {
+        "claude-oauth" | "openai-oauth" | "code-assist-oauth" => "oauth",
+        "api-key" | "openai-api-key" => "api key",
+        method if method.starts_with("openai-compatible") => "api key",
+        method => method
+            .split_once(':')
+            .map(|(method, _)| method)
+            .unwrap_or(method),
+    }
+}
+
+fn route_provider_display(provider: &str, api_method: &str) -> String {
+    if api_method == "openrouter" && provider != "auto" && !provider.contains("OpenRouter") {
+        format!("OpenRouter/{}", provider)
+    } else {
+        provider.to_string()
+    }
 }
 
 fn picker_entry_display_name(entry: &crate::tui::PickerEntry) -> String {
     let default_marker = if entry.is_default { " ⚙" } else { "" };
-    let suffix = if entry.recommended && !entry.is_current {
+    let is_new = entry
+        .options
+        .iter()
+        .any(|option| option.detail.contains("recently added"));
+    let suffix = if is_new && !entry.is_current {
+        format!(" new{}", default_marker)
+    } else if entry.recommended {
         format!(" ★{}", default_marker)
     } else if entry.old && !entry.is_current {
         if let Some(ref date) = entry.created_date {
@@ -183,19 +205,26 @@ fn picker_render_width(picker: &crate::tui::InlineInteractiveState, max_width: u
         let entry = &picker.entries[fi];
         max_model_len = max_model_len.max(display_width(picker_entry_display_name(entry).as_str()));
         if let Some(route) = entry.active_option() {
+            let provider_label = route_provider_display(&route.provider, &route.api_method);
             let provider_label = if entry.option_count() > 1 {
-                format!("{} ({})", route.provider, entry.option_count())
+                format!("{} ({})", provider_label, entry.option_count())
             } else {
-                route.provider.clone()
+                provider_label
             };
             max_provider_len = max_provider_len.max(display_width(provider_label.as_str()));
             max_via_len = max_via_len.max(display_width(api_method_display(&route.api_method)));
         }
     }
 
-    let mut provider_width = (max_provider_len + 1).min(if is_preview { 16 } else { 20 });
-    let mut via_width = (max_via_len + 1).min(12);
-    let model_cap = if is_preview { 42 } else { 56 };
+    let mut provider_width = max_provider_len + 1;
+    let mut via_width = max_via_len + 1;
+    let model_cap = if picker.kind == crate::tui::PickerKind::Model {
+        max_width
+    } else if is_preview {
+        42
+    } else {
+        56
+    };
     let min_model_width = max_model_len.clamp(6, 8);
 
     let budget = max_width.saturating_sub(marker_width);
@@ -288,8 +317,8 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
 
     let show_account_provider_badge =
         is_account_picker && account_picker_shows_provider_badge(picker);
-    let mut max_provider_len = 0usize;
-    let mut max_via_len = 0usize;
+    let mut max_provider_len = display_width(picker.secondary_label(is_preview));
+    let mut max_via_len = display_width(picker.tertiary_label());
     let mut max_account_title_len = display_width("ACCOUNT");
     let mut max_account_state_len = display_width("STATE");
     for &fi in picker.filtered.iter().take(WIDTH_SCAN_LIMIT) {
@@ -337,9 +366,25 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
     let height = inner.height as usize;
     let width = inner.width as usize;
 
-    let provider_cap = if is_preview { 16 } else { 20 };
-    let provider_width = (max_provider_len + 1).max(8).min(provider_cap);
-    let via_width = (max_via_len + 1).clamp(4, 12);
+    let mut provider_width = (max_provider_len + 1).max(8);
+    let mut via_width = (max_via_len + 1).max(6);
+    if !is_account_picker {
+        let min_model_width = 8usize;
+        let needed = marker_width + provider_width + via_width + min_model_width;
+        if needed > width {
+            let provider_floor = 8usize.min(provider_width);
+            let via_floor = 6usize.min(via_width);
+            let provider_reduction = needed
+                .saturating_sub(width)
+                .min(provider_width.saturating_sub(provider_floor));
+            provider_width = provider_width.saturating_sub(provider_reduction);
+            let still_needed = marker_width + provider_width + via_width + min_model_width;
+            let via_reduction = still_needed
+                .saturating_sub(width)
+                .min(via_width.saturating_sub(via_floor));
+            via_width = via_width.saturating_sub(via_reduction);
+        }
+    }
     let account_state_width = (max_account_state_len + 1).clamp(7, 10);
     let account_title_width = width.saturating_sub(marker_width + account_state_width);
     let model_width = width.saturating_sub(marker_width + provider_width + via_width);
@@ -633,11 +678,13 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
         };
 
         let route_count = entry.option_count();
-        let provider_raw = route.map(|r| r.provider.as_str()).unwrap_or("—");
+        let provider_raw = route
+            .map(|r| route_provider_display(&r.provider, &r.api_method))
+            .unwrap_or_else(|| "—".to_string());
         let provider_label = if col == 0 && route_count > 1 {
             format!("{} ({})", provider_raw, route_count)
         } else {
-            provider_raw.to_string()
+            provider_raw
         };
         let pw = provider_width.saturating_sub(1);
         let provider_display = format!(" {}", pad_left_display(provider_label.as_str(), pw));
@@ -835,6 +882,10 @@ mod tests {
             Some("unavailable · credentials expired")
         );
         assert_eq!(
+            route_detail_display_text("no matching configured provider route", true).as_deref(),
+            Some("unavailable · no matching configured provider route")
+        );
+        assert_eq!(
             route_detail_display_text("", true).as_deref(),
             Some("unavailable")
         );
@@ -849,8 +900,14 @@ mod tests {
     fn picker_render_width_uses_intrinsic_content_width() {
         let picker = sample_picker();
         let width = picker_render_width(&picker, 120);
-        assert!(width < 120, "picker should not expand to full width");
-        assert!(width >= 20, "picker should remain wide enough for content");
+        assert!(
+            width < 120,
+            "model picker should fit content, not fill the window"
+        );
+        assert!(
+            width >= 40,
+            "model picker should still fit its visible columns"
+        );
     }
 
     #[test]
@@ -866,8 +923,38 @@ mod tests {
             height: area.height,
         };
 
-        assert!(render_area.x > area.x, "centered picker should shift right");
+        assert!(
+            render_area.x > area.x,
+            "content-fit picker should center when possible"
+        );
         assert_eq!(render_area.width, width);
+    }
+
+    #[test]
+    fn model_picker_method_display_uses_user_friendly_labels() {
+        assert_eq!(api_method_display("openai-oauth"), "oauth");
+        assert_eq!(api_method_display("openai-api-key"), "api key");
+        assert_eq!(api_method_display("openai-compatible:comtegra"), "api key");
+    }
+
+    #[test]
+    fn picker_entry_display_name_labels_recently_added_models_as_new() {
+        let mut picker = sample_picker();
+        let entry = &mut picker.entries[0];
+        entry.is_current = false;
+        entry.options[0].detail = "recently added · https://llm.comtegra.cloud/v1".to_string();
+
+        assert!(picker_entry_display_name(entry).contains(" new"));
+    }
+
+    #[test]
+    fn picker_entry_display_name_labels_recommended_even_when_current() {
+        let mut picker = sample_picker();
+        let entry = &mut picker.entries[0];
+        entry.is_current = true;
+        entry.recommended = true;
+
+        assert!(picker_entry_display_name(entry).contains("★"));
     }
 
     #[test]
