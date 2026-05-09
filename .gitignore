@@ -5,3 +5,9 @@ ios_simulator_screenshot.png
 /.wrangler/
 /tmp/
 /.jcode/generated-images/
+/.omc/
+/.omx/
+/web-ui/.omc/
+/web-ui/dist/
+/web-ui/node_modules/
+/web-ui/src-tauri/target/

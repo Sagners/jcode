@@ -765,6 +765,8 @@ pub struct GatewayConfig {
     pub port: u16,
     /// Bind address (default: 0.0.0.0)
     pub bind_addr: String,
+    /// Allow unauthenticated WebSocket connections from localhost (for web UI)
+    pub guest_access: bool,
 }
 
 impl Default for GatewayConfig {
@@ -773,6 +775,7 @@ impl Default for GatewayConfig {
             enabled: false,
             port: 7643,
             bind_addr: "0.0.0.0".to_string(),
+            guest_access: false,
         }
     }
 }

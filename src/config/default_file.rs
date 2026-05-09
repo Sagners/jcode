@@ -209,6 +209,8 @@ enabled = false
 port = 7643
 # Bind address (0.0.0.0 for LAN/Tailscale reachability)
 bind_addr = "0.0.0.0"
+# Allow unauthenticated WebSocket access from localhost only
+guest_access = false
 
 [safety]
 # Notification settings for ambient mode events

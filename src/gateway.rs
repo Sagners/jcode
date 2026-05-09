@@ -44,6 +44,8 @@ pub struct GatewayConfig {
     pub bind_addr: String,
     /// Whether gateway is enabled
     pub enabled: bool,
+    /// Allow unauthenticated WebSocket connections from localhost (for web UI)
+    pub guest_access: bool,
 }
 
 impl Default for GatewayConfig {
@@ -52,6 +54,7 @@ impl Default for GatewayConfig {
             port: DEFAULT_PORT,
             bind_addr: "0.0.0.0".to_string(),
             enabled: false,
+            guest_access: false,
         }
     }
 }
@@ -75,6 +78,7 @@ pub async fn run_gateway(
     let addr = format!("{}:{}", config.bind_addr, config.port);
     let listener = TcpListener::bind(&addr).await?;
     logging::info(&format!("WebSocket gateway listening on {}", addr));
+    let guest_access = config.guest_access;
 
     let registry = Arc::new(tokio::sync::RwLock::new(DeviceRegistry::load()));
 
@@ -84,7 +88,9 @@ pub async fn run_gateway(
         let client_tx = client_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(tcp_stream, peer_addr, registry, client_tx).await {
+            if let Err(e) =
+                handle_connection(tcp_stream, peer_addr, registry, client_tx, guest_access).await
+            {
                 logging::error(&format!(
                     "Gateway connection error from {}: {}",
                     peer_addr, e
@@ -104,6 +110,7 @@ async fn handle_connection(
     peer_addr: SocketAddr,
     registry: Arc<tokio::sync::RwLock<DeviceRegistry>>,
     client_tx: tokio::sync::mpsc::UnboundedSender<GatewayClient>,
+    guest_access: bool,
 ) -> Result<()> {
     let mut peek_buf = [0u8; 2048];
     let n = tcp_stream.peek(&mut peek_buf).await?;
@@ -115,7 +122,7 @@ async fn handle_connection(
     });
 
     if is_websocket {
-        handle_ws_connection(tcp_stream, peer_addr, registry, client_tx).await
+        handle_ws_connection(tcp_stream, peer_addr, registry, client_tx, guest_access).await
     } else {
         handle_http(tcp_stream, peer_addr, registry).await
     }
@@ -141,6 +148,7 @@ async fn handle_ws_connection(
     peer_addr: SocketAddr,
     registry: Arc<tokio::sync::RwLock<DeviceRegistry>>,
     client_tx: tokio::sync::mpsc::UnboundedSender<GatewayClient>,
+    guest_access: bool,
 ) -> Result<()> {
     // Perform WebSocket handshake with a callback to inspect headers.
     // Prefer Authorization headers, but continue accepting ?token= for browser clients.
@@ -159,7 +167,7 @@ async fn handle_ws_connection(
                 ));
             }
 
-            let ws_auth = extract_ws_auth(request)?;
+            let ws_auth = extract_ws_auth(request, guest_access && peer_addr.ip().is_loopback())?;
             let mut guard = auth_cb
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -184,7 +192,13 @@ async fn handle_ws_connection(
         ));
     }
 
-    let (device_name, device_id) = {
+    // Guest tokens don't need device registry validation
+    let (device_name, device_id) = if auth.source == WsAuthSource::Guest {
+        (
+            "jcode Web UI (Guest)".to_string(),
+            "guest-web-ui".to_string(),
+        )
+    } else {
         let mut reg = registry.write().await;
         // Reload from disk to pick up newly paired devices
         *reg = DeviceRegistry::load();

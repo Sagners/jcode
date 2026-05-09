@@ -8,6 +8,22 @@ pub(super) struct WsAuth {
 pub(super) enum WsAuthSource {
     Header,
     Query,
+    Guest,
+}
+
+/// Create a guest auth token for localhost connections
+pub(super) fn create_guest_auth() -> WsAuth {
+    use rand::Rng;
+    let token: String = (0..64)
+        .map(|_| {
+            let idx = rand::rng().random_range(0..16);
+            "0123456789abcdef".chars().nth(idx).unwrap()
+        })
+        .collect();
+    WsAuth {
+        token,
+        source: WsAuthSource::Guest,
+    }
 }
 
 #[expect(
@@ -16,6 +32,7 @@ pub(super) enum WsAuthSource {
 )]
 pub(super) fn extract_ws_auth(
     request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+    guest_access: bool,
 ) -> std::result::Result<WsAuth, tokio_tungstenite::tungstenite::handshake::server::ErrorResponse> {
     let header_token = match request
         .headers()
@@ -44,6 +61,10 @@ pub(super) fn extract_ws_auth(
         (Some(header), _) => (header, WsAuthSource::Header),
         (None, Some(query)) => (query, WsAuthSource::Query),
         (None, None) => {
+            // No token provided - check for guest access
+            if guest_access {
+                return Ok(create_guest_auth());
+            }
             return Err(ws_error_response(
                 401,
                 "Unauthorized",

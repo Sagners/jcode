@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>jcode Web UI - Debug</title>
+  <style>
+    body { font-family: Inter, sans-serif; padding: 20px; background: #0F0F14; color: white; }
+    .status { padding: 10px 20px; border-radius: 4px; display: inline-block; margin: 10px 0; }
+    .connected { background: #4DD9A6; color: #0F0F14; }
+    .disconnected { background: #D94D59; }
+    .connecting { background: #F59E0B; }
+    button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+    .log { background: #1A1A1F; padding: 10px; margin-top: 20px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    .log-entry { margin: 2px 0; }
+    .log-entry.error { color: #D94D59; }
+    .log-entry.success { color: #4DD9A6; }
+  </style>
+</head>
+<body>
+  <h1>jcode Web UI - Connection Debug</h1>
+  <div id="statusDisplay" class="status disconnected">Unknown</div>
+  <div>
+    <button onclick="testHealth()">Test /health</button>
+    <button onclick="testWebSocket()">Test WebSocket</button>
+    <button onclick="testApiHealth()">Test API.health()</button>
+  </div>
+  <div id="log" class="log"></div>
+  <script>
+    const log = document.getElementById('log');
+    const statusEl = document.getElementById('statusDisplay');
+    function addLog(msg, isError) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry' + (isError ? ' error' : '');
+      entry.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+    }
+    function setStatus(status) {
+      statusEl.className = 'status ' + status;
+      statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    }
+    async function testHealth() {
+      addLog('Testing /health endpoint...');
+      try {
+        const resp = await fetch('http://127.0.0.1:7643/health');
+        const data = await resp.json();
+        addLog('/health OK: ' + JSON.stringify(data), false);
+      } catch (e) {
+        addLog('/health FAILED: ' + e.message, true);
+      }
+    }
+    async function testWebSocket() {
+      addLog('Testing WebSocket...');
+      const ws = new WebSocket('ws://127.0.0.1:7643/ws');
+      ws.onopen = function() {
+        addLog('WebSocket connected!', false);
+        ws.close();
+      };
+      ws.onerror = function(e) {
+        addLog('WebSocket error: ' + e.type, true);
+      };
+    }
+    async function testApiHealth() {
+      addLog('Testing API.health()...');
+      try {
+        const health = await fetch('http://127.0.0.1:7643/health');
+        const data = await health.json();
+        addLog('API.health OK: ' + JSON.stringify(data), false);
+        setStatus('connected');
+        addLog('Connection status set to: connected', false);
+      } catch (e) {
+        addLog('API.health FAILED: ' + e.message, true);
+        setStatus('disconnected');
+        addLog('Connection status set to: disconnected', true);
+      }
+    }
+    setTimeout(testApiHealth, 500);
+  </script>
+</body>
+</html>

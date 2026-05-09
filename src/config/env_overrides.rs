@@ -371,6 +371,11 @@ impl Config {
                 self.gateway.bind_addr = trimmed.to_string();
             }
         }
+        if let Ok(v) = std::env::var("JCODE_GATEWAY_GUEST_ACCESS") {
+            if let Some(parsed) = parse_env_bool(&v) {
+                self.gateway.guest_access = parsed;
+            }
+        }
 
         // Provider
         if let Ok(v) = std::env::var("JCODE_MODEL") {

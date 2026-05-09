@@ -1,0 +1,11 @@
+node_modules
+src-tauri
+.git
+.gitignore
+*.md
+tests
+package.json
+package-lock.json
+*.ps1
+*.bat
+CLAUDE.md

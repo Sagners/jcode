@@ -1,0 +1,143 @@
+// jcode Web UI Button Functionality Tests
+const { chromium } = require('playwright');
+
+const BASE_URL = 'http://localhost:9527';
+
+async function runTests() {
+  console.log('=== jcode Web UI Button Functionality Tests ===\n');
+
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  const results = [];
+  const pass = (name, msg) => { results.push({ name, status: 'PASS', msg }); console.log(`✓ ${name}${msg ? ': ' + msg : ''}`); };
+  const fail = (name, msg) => { results.push({ name, status: 'FAIL', msg }); console.log(`✗ ${name}: ${msg}`); };
+
+  // Load page
+  await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 10000 });
+  await page.waitForTimeout(2000);
+
+  // Test 1: Create New Session Button
+  console.log('\n--- Test: Create New Session ---');
+  try {
+    // Mock prompt to avoid dialogs
+    await page.evaluate(() => { window.prompt = () => 'TestLane'; });
+
+    // Get surface count before
+    const beforeCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    console.log('  Surfaces before:', beforeCount);
+
+    // Click new session button
+    await page.click('#newSessionBtn');
+    await page.waitForTimeout(500);
+
+    // Get surface count after
+    const afterCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    console.log('  Surfaces after:', afterCount);
+
+    if (afterCount > beforeCount && afterCount > 0) {
+      pass('Create New Session', `Surfaces: ${beforeCount} -> ${afterCount}`);
+    } else {
+      fail('Create New Session', 'No surface created');
+    }
+  } catch (e) {
+    fail('Create New Session', e.message);
+  }
+
+  // Test 2: Open Settings Button
+  console.log('\n--- Test: Open Settings ---');
+  try {
+    // Get surface count before
+    const beforeCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    // Click settings button
+    await page.click('#openSettingsBtn');
+    await page.waitForTimeout(500);
+
+    // Get surface count after
+    const afterCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    console.log('  Surfaces before:', beforeCount, 'after:', afterCount);
+
+    if (afterCount > beforeCount) {
+      pass('Open Settings', `Surfaces: ${beforeCount} -> ${afterCount}`);
+    } else {
+      fail('Open Settings', 'No surface created');
+    }
+  } catch (e) {
+    fail('Open Settings', e.message);
+  }
+
+  // Test 3: Toggle Files Button
+  console.log('\n--- Test: Toggle Files ---');
+  try {
+    const beforeCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    await page.click('#toggleFilesBtn');
+    await page.waitForTimeout(500);
+
+    const afterCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    console.log('  Surfaces before:', beforeCount, 'after:', afterCount);
+
+    if (afterCount > beforeCount) {
+      pass('Toggle Files', `Surfaces: ${beforeCount} -> ${afterCount}`);
+    } else {
+      fail('Toggle Files', 'No surface created');
+    }
+  } catch (e) {
+    fail('Toggle Files', e.message);
+  }
+
+  // Test 4: Verify Surface Store exists
+  console.log('\n--- Test: Surface Store Available ---');
+  const storeExists = await page.evaluate(() => typeof SurfaceStore !== 'undefined');
+  if (storeExists) {
+    pass('Surface Store', 'Available');
+  } else {
+    fail('Surface Store', 'Not found');
+  }
+
+  // Test 5: Check for surface rendering in DOM
+  console.log('\n--- Test: Surface DOM Elements ---');
+  try {
+    const surfaceCount = await page.$$eval('.surface-container', els => els.length);
+    console.log('  Surface elements in DOM:', surfaceCount);
+    if (surfaceCount > 0) {
+      pass('Surface Rendering', `${surfaceCount} surface(s) rendered`);
+    } else {
+      fail('Surface Rendering', 'No surfaces in DOM');
+    }
+  } catch (e) {
+    fail('Surface Rendering', e.message);
+  }
+
+  // Summary
+  console.log('\n=== Summary ===');
+  const passed = results.filter(r => r.status === 'PASS').length;
+  const failed = results.filter(r => r.status === 'FAIL').length;
+  console.log(`Total: ${passed} passed, ${failed} failed`);
+
+  await browser.close();
+  process.exit(failed > 0 ? 1 : 0);
+}
+
+runTests().catch(e => {
+  console.error('Test error:', e);
+  process.exit(1);
+});
