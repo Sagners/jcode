@@ -107,40 +107,47 @@ const SettingsSurface = {
   },
 
   renderConnectionTab() {
-    const connectionStatus = ConnectionStore.connected ? 'Connected' : 'Disconnected';
-    const statusClass = ConnectionStore.connected ? 'connected' : 'disconnected';
+    const snapshot = ConnectionStore.snapshot();
+    const connectionStatus = snapshot.connected ? 'Connected' : snapshot.gatewayReachable ? 'Needs pairing' : 'Gateway offline';
+    const statusClass = snapshot.connected ? 'connected' : snapshot.connecting ? 'connecting' : 'disconnected';
 
     return `
       <div class="settings-section">
         <h3 class="settings-section-title">Connection</h3>
 
         <div class="settings-field">
-          <label class="settings-label">Gateway URL</label>
+          <label class="settings-label">Gateway HTTP URL</label>
           <input type="text" class="settings-input" id="settingGatewayUrl"
-            value="ws://127.0.0.1:7643/ws" placeholder="ws://127.0.0.1:7643/ws">
+            value="${API.baseUrl}" placeholder="http://127.0.0.1:7643">
         </div>
 
         <div class="settings-field">
           <label class="settings-label">Status</label>
-          <div style="display: flex; align-items: center; gap: var(--space-2);">
+          <div class="connection-status-row">
             <span class="status-dot ${statusClass}"></span>
-            <span>${connectionStatus}</span>
+            <span id="connectionStatusLabel">${connectionStatus}</span>
+            <span class="connection-detail" id="connectionDetail">${snapshot.detail || ''}</span>
           </div>
         </div>
 
         <div class="settings-field">
-          <label class="settings-label">Auto-reconnect</label>
-          <select class="settings-input" id="settingAutoReconnect">
-            <option value="always">Always</option>
-            <option value="wifi">Only on Wi-Fi</option>
-            <option value="never">Never</option>
-          </select>
+          <label class="settings-label">Pairing Code</label>
+          <div class="pairing-row">
+            <input type="text" class="settings-input pairing-code-input" id="pairingCode"
+              inputmode="numeric" maxlength="6" placeholder="Run jcode pair, then enter code">
+            <button class="btn primary" id="pairBtn">Pair</button>
+          </div>
+          <p class="settings-help">Pairing stores a local browser token. Guest WebSocket access is disabled by default.</p>
         </div>
 
         <div class="settings-field">
-          <label class="settings-label">Connection Timeout (seconds)</label>
-          <input type="number" class="settings-input" id="settingTimeout"
-            value="30" min="5" max="120">
+          <label class="settings-label">Saved Token</label>
+          <div class="token-row">
+            <input type="password" class="settings-input" id="savedToken"
+              value="${localStorage.getItem('jcode_auth_token') || ''}" placeholder="64-character token">
+            <button class="btn" id="saveTokenBtn">Save</button>
+            <button class="btn" id="clearTokenBtn">Clear</button>
+          </div>
         </div>
 
         <button class="btn" id="reconnectBtn" style="margin-top: var(--space-4);">
@@ -270,17 +277,72 @@ const SettingsSurface = {
         reconnectBtn.addEventListener('click', () => {
           this.showToast('Reconnecting...');
           WS.disconnect();
-          setTimeout(() => WS.connect(), 500);
+          App.checkConnection();
         });
       }
 
-      // Update gateway version
-      const versionEl = content.querySelector('#gatewayVersion');
-      if (versionEl) {
-        this.fetchGatewayVersion().then(version => {
+      const pairBtn = content.querySelector('#pairBtn');
+      const pairingCode = content.querySelector('#pairingCode');
+      pairBtn?.addEventListener('click', async () => {
+        const code = pairingCode?.value.trim();
+        if (!code) {
+          this.showToast('Enter the pairing code from jcode pair.', true);
+          return;
+        }
+        try {
+          pairBtn.disabled = true;
+          const result = await API.pair(code);
+          if (!result.token) throw new Error('Pairing response did not include a token');
+          WS.setToken(result.token);
+          ConnectionStore.setAuthenticated(true, 'Pairing token saved');
+          this.showToast('Paired. Reconnecting...');
+          WS.disconnect();
+          App.checkConnection();
+        } catch (e) {
+          this.showToast(e.message, true);
+        } finally {
+          pairBtn.disabled = false;
+        }
+      });
+
+      const savedToken = content.querySelector('#savedToken');
+      content.querySelector('#saveTokenBtn')?.addEventListener('click', () => {
+        const token = savedToken?.value.trim();
+        if (!token) {
+          this.showToast('Token is empty.', true);
+          return;
+        }
+        WS.setToken(token);
+        this.showToast('Token saved. Reconnecting...');
+        WS.disconnect();
+        App.checkConnection();
+      });
+
+      content.querySelector('#clearTokenBtn')?.addEventListener('click', () => {
+        WS.setToken(null);
+        ConnectionStore.setAuthenticated(false, 'Pairing token cleared');
+        this.showToast('Token cleared.');
+        WS.disconnect();
+        App.checkConnection();
+      });
+
+      const gatewayUrl = content.querySelector('#settingGatewayUrl');
+      gatewayUrl?.addEventListener('change', () => {
+        const value = gatewayUrl.value.trim().replace(/\/$/, '');
+        if (value) {
+          API.baseUrl = value;
+          localStorage.setItem('jcode_gateway_url', value);
+          this.showToast('Gateway URL saved. Rechecking...');
+          App.checkConnection();
+        }
+      });
+
+      this.fetchGatewayVersion().then(version => {
+        const versionEl = content.querySelector('#gatewayVersion');
+        if (versionEl) {
           versionEl.textContent = version || 'Unknown';
-        });
-      }
+        }
+      });
     }
 
     // Model tab listeners
@@ -298,12 +360,16 @@ const SettingsSurface = {
     if (tabName === 'connection') {
       ConnectionStore.subscribe((state) => {
         const statusEl = content.querySelector('.status-dot');
-        const statusText = content.querySelector('.settings-field:nth-child(2) span:last-child');
+        const statusText = content.querySelector('#connectionStatusLabel');
+        const detailText = content.querySelector('#connectionDetail');
         if (statusEl) {
-          statusEl.className = 'status-dot ' + (state.connected ? 'connected' : 'disconnected');
+          statusEl.className = `status-dot ${state.connecting ? 'connecting' : state.connected ? 'connected' : 'disconnected'}`;
         }
         if (statusText) {
-          statusText.textContent = state.connected ? 'Connected' : 'Disconnected';
+          statusText.textContent = state.connected ? 'Connected' : state.gatewayReachable ? 'Needs pairing' : 'Gateway offline';
+        }
+        if (detailText) {
+          detailText.textContent = state.detail || '';
         }
       });
     }

@@ -568,6 +568,11 @@
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
+.composer-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .composer-send {
   padding: var(--space-3) var(--space-5);
   background: var(--accent-gradient);
@@ -591,6 +596,14 @@
   box-shadow: var(--shadow-glow);
 }
 
+.composer-send:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.4);
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
+}
+
 .composer-send:active {
   transform: scale(0.95);
 }
@@ -608,6 +621,46 @@
 
 .meta-item {
   white-space: nowrap;
+}
+
+.session-empty-hint {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.session-connection-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--warning-tint);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.session-connection-banner[hidden] {
+  display: none;
+}
+
+.session-connection-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline-action {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.inline-action:hover {
+  background: var(--accent-tint);
 }
 
 /* ===== Header Toolbar ===== */
@@ -728,6 +781,37 @@
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.connection-status-row,
+.pairing-row,
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.connection-detail {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-left: auto;
+  text-align: right;
+}
+
+.pairing-code-input {
+  max-width: 220px;
+  letter-spacing: 0.08em;
+  font-family: var(--font-mono);
+}
+
+.token-row .settings-input {
+  font-family: var(--font-mono);
+}
+
+.settings-help {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-top: var(--space-2);
 }
 
 .settings-range {

@@ -20,8 +20,13 @@ const AgentSessionSurface = {
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
           <p>Start a conversation</p>
-          <p style="font-size: var(--text-sm); color: var(--text-tertiary);">Send a message to begin</p>
+          <p class="session-empty-hint">Connect to the gateway, then send a message to begin.</p>
         </div>
+      </div>
+      <div class="session-connection-banner" id="connectionBanner_${surface.id}" hidden>
+        <span class="status-dot disconnected"></span>
+        <span class="session-connection-text">Gateway not connected.</span>
+        <button class="inline-action" id="openConnectionSettings_${surface.id}">Connection settings</button>
       </div>
       <div class="composer">
         <button class="composer-attachment" title="Attach file">
@@ -29,7 +34,7 @@ const AgentSessionSurface = {
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
           </svg>
         </button>
-        <textarea class="composer-input" placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+        <textarea class="composer-input" placeholder="Connect to jcode Gateway to start messaging"
           rows="1" id="msgInput_${surface.id}"></textarea>
         <button class="composer-send" id="sendBtn_${surface.id}" title="Send message">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -42,6 +47,7 @@ const AgentSessionSurface = {
 
     this.setupEventListeners(container, surface);
     this.subscribeToMessages(surface.id);
+    this.bindConnectionState(container, surface);
 
     return container;
   },
@@ -72,6 +78,45 @@ const AgentSessionSurface = {
         }
       });
     }
+
+    const settingsBtn = container.querySelector(`#openConnectionSettings_${surface.id}`);
+    settingsBtn?.addEventListener('click', () => {
+      if (typeof WorkspaceController !== 'undefined') {
+        WorkspaceController.openSettingsSurface('connection');
+      }
+    });
+  },
+
+  bindConnectionState(container, surface) {
+    const input = container.querySelector(`#msgInput_${surface.id}`);
+    const sendBtn = container.querySelector(`#sendBtn_${surface.id}`);
+    const banner = container.querySelector(`#connectionBanner_${surface.id}`);
+    const bannerText = banner?.querySelector('.session-connection-text');
+    const dot = banner?.querySelector('.status-dot');
+
+    ConnectionStore.subscribe((state) => {
+      const canSend = state.connected;
+      if (input) {
+        input.disabled = !canSend;
+        input.placeholder = canSend
+          ? 'Type your message... (Enter to send, Shift+Enter for new line)'
+          : 'Connect to jcode Gateway to start messaging';
+      }
+      if (sendBtn) {
+        sendBtn.disabled = !canSend;
+      }
+      if (banner) {
+        banner.hidden = canSend;
+      }
+      if (bannerText) {
+        bannerText.textContent = state.gatewayReachable
+          ? (state.detail || 'Gateway reachable. Pair this browser before sending.')
+          : (state.detail || 'Gateway offline. Start jcode serve first.');
+      }
+      if (dot) {
+        dot.className = `status-dot ${state.connecting ? 'connecting' : state.connected ? 'connected' : 'disconnected'}`;
+      }
+    });
   },
 
   sendMessage(sessionId, content) {
@@ -86,14 +131,14 @@ const AgentSessionSurface = {
     if (WS.getState() === 'open') {
       WS.send({
         type: 'message',
-        session_id: sessionId,
-        content: content
+        content,
+        images: []
       });
-      console.log('Message sent via WebSocket:', { session_id: sessionId, content });
+      console.log('Message sent via WebSocket:', { content });
     } else {
       this.addMessageToDisplay({
         role: 'system',
-        content: 'Error: WebSocket not connected. Please refresh the page.',
+        content: 'Gateway is not connected. Open Connection settings, pair this web UI, then try again.',
         timestamp: Date.now()
       }, sessionId);
     }
@@ -148,7 +193,7 @@ const AgentSessionSurface = {
   handleIncomingMessage(data, sessionId) {
     console.log('Handling incoming message:', data.type, sessionId);
 
-    if (data.type === 'chunk' || data.type === 'assistant' || data.type === 'response') {
+    if (data.type === 'chunk' || data.type === 'assistant' || data.type === 'response' || data.type === 'text' || data.type === 'text_delta' || data.type === 'stream_text') {
       this.addMessageToDisplay({
         role: 'assistant',
         content: data.content || data.delta || data.text || '',

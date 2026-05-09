@@ -2,13 +2,16 @@
 
 const WorkspaceController = {
   container: null,
+  initialized: false,
 
   init() {
+    if (this.initialized) return;
     this.container = document.getElementById('laneContent');
     if (!this.container) {
       console.error('WorkspaceController: laneContent container not found');
       return;
     }
+    this.initialized = true;
 
     this.initLaneNavigator();
     this.initToolbar();
@@ -555,13 +558,17 @@ const WorkspaceController = {
     this.renderActiveLane();
   },
 
-  openSettingsSurface() {
+  openSettingsSurface(initialTab = 'general') {
+    if (typeof SettingsSurface !== 'undefined') {
+      SettingsSurface.activeTab = initialTab;
+    }
+
     const lane = LaneStore.activeLane;
     if (!lane?.columns[0]) {
       // Create lane if none exists
       const newLane = LaneStore.createLane({ name: 'Settings' });
       LaneStore.setActiveLane(newLane);
-      return this.openSettingsSurface();
+      return this.openSettingsSurface(initialTab);
     }
 
     // Check if settings already open
@@ -597,15 +604,5 @@ const WorkspaceController = {
     });
   }
 };
-
-// Auto-init when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  // Delay slightly to ensure DOM elements are available
-  setTimeout(() => {
-    if (document.getElementById('laneContent')) {
-      WorkspaceController.init();
-    }
-  }, 0);
-});
 
 window.WorkspaceController = WorkspaceController;

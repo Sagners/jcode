@@ -4,14 +4,20 @@ const App = {
   async init() {
     console.log('jcode Web UI initializing...');
 
+    const savedGatewayUrl = localStorage.getItem('jcode_gateway_url');
+    if (savedGatewayUrl) {
+      API.baseUrl = savedGatewayUrl;
+    }
+
     // Initialize connection monitoring
     this.initConnection();
 
-    // Register routes
-    this.registerRoutes();
-
-    // Start router
-    Router.init();
+    // The current UI is a lane-based workbench. The legacy hash router expects
+    // a mainContent container that this shell no longer renders.
+    if (document.getElementById('mainContent')) {
+      this.registerRoutes();
+      Router.init();
+    }
 
     // Initialize workspace controller (lane-based UI)
     if (typeof WorkspaceController !== 'undefined') {
@@ -48,20 +54,29 @@ const App = {
 
       if (state.connected) {
         dot.className = 'status-dot connected';
-        status.textContent = 'Connected';
+        status.textContent = state.authenticated ? 'Connected' : 'Connected locally';
       } else if (state.connecting) {
         dot.className = 'status-dot connecting';
-        status.textContent = 'Connecting...';
+        status.textContent = 'Connecting';
       } else {
         dot.className = 'status-dot disconnected';
-        status.textContent = 'Disconnected';
+        status.textContent = state.gatewayReachable ? 'Needs pairing' : 'Gateway offline';
       }
+      status.title = state.detail || '';
     });
 
     // Connect WebSocket
     WS.on('open', () => {
       ConnectionStore.setConnected(true);
       console.log('Connected to jcode Gateway');
+      WS.send({
+        type: 'subscribe',
+        working_dir: null,
+        client_instance_id: localStorage.getItem('jcode_device_id') || 'web-ui',
+        client_has_local_history: false,
+        allow_session_takeover: false
+      });
+      WS.send({ type: 'get_history' });
     });
 
     WS.on('close', () => {
@@ -124,6 +139,24 @@ const App = {
         // Heartbeat response - connection is alive
         break;
 
+      case 'session_id':
+        if (data.session_id) {
+          localStorage.setItem('jcode_active_session_id', data.session_id);
+        }
+        break;
+
+      case 'text':
+      case 'text_delta':
+      case 'stream_text':
+        MessagesStore.addMessage({
+          id: data.id || Date.now().toString(),
+          sessionId: localStorage.getItem('jcode_active_session_id') || 'main',
+          role: 'assistant',
+          content: data.text || data.content || data.delta || '',
+          timestamp: Date.now()
+        });
+        break;
+
       default:
         console.log('Unhandled message type:', data.type);
     }
@@ -136,28 +169,31 @@ const App = {
       // Try HTTP health check
       const health = await API.health();
       console.log('Gateway health:', health);
-
-      // Gateway is available
-      ConnectionStore.setConnected(true);
+      ConnectionStore.setGatewayHealth({
+        reachable: true,
+        version: health.version,
+        detail: `Gateway ${health.version || ''} is reachable`.trim()
+      });
 
       // Check for saved token in localStorage
       let token = localStorage.getItem('jcode_auth_token');
 
-      if (!token) {
-        // Try to get a token by creating a device pair
-        token = await this.autoPair();
-      }
-
       if (token) {
         console.log('Connecting with auth token...');
         WS.setToken(token);
+      } else {
+        ConnectionStore.setAuthenticated(false, 'No pairing token saved');
       }
 
       // Connect WebSocket
       WS.connect();
     } catch (e) {
       console.log('Gateway not available:', e.message);
-      ConnectionStore.setConnected(false);
+      ConnectionStore.setGatewayHealth({
+        reachable: false,
+        detail: 'Start jcode serve with gateway enabled'
+      });
+      ConnectionStore.setStatus('disconnected', 'Gateway health check failed');
     }
   },
 
@@ -378,9 +414,12 @@ const App = {
 
   async loadInitialData() {
     try {
-      // Load sessions
-      const sessions = await API.listSessions();
-      SessionStore.setSessions(sessions.sessions || []);
+      const health = await API.health();
+      ConnectionStore.setGatewayHealth({
+        reachable: true,
+        version: health.version,
+        detail: `Gateway ${health.version || ''} is reachable`.trim()
+      });
     } catch (e) {
       console.log('Could not load initial data:', e.message);
     }

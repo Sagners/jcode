@@ -9,34 +9,47 @@ const WS = {
   token: null,
   requestId: 0,
   pendingRequests: new Map(),
+  manualDisconnect: false,
 
   connect() {
+    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    this.manualDisconnect = false;
+    ConnectionStore.setStatus('connecting', 'Opening WebSocket');
+
     // Build WebSocket URL with token if available
     let wsUrl = 'ws://127.0.0.1:7643/ws';
     if (this.token) {
       wsUrl += `?token=${this.token}`;
     }
-    console.log('WebSocket: Connecting to', wsUrl);
+    console.log('WebSocket: Connecting to gateway');
     this.socket = new WebSocket(wsUrl);
 
     this.socket.onopen = () => {
       console.log('WebSocket: Connected');
       this.reconnectAttempts = 0;
+      ConnectionStore.setAuthenticated(Boolean(this.token), this.token ? 'Authenticated with saved token' : 'Connected without token');
       ConnectionStore.setConnected(true);
       this.emit('open');
     };
 
     this.socket.onclose = (event) => {
       console.log('WebSocket: Disconnected', event.code, event.reason);
-      ConnectionStore.setConnected(false);
+      const authFailure = event.code === 1008 || event.code === 1006;
+      ConnectionStore.setStatus('disconnected', authFailure && !this.token
+        ? 'Gateway requires a pairing token. Run jcode pair, then add the token in Settings.'
+        : 'WebSocket disconnected');
       this.emit('close', { code: event.code, reason: event.reason });
-      if (!event.wasClean) {
+      if (!event.wasClean && !this.manualDisconnect) {
         this.attemptReconnect();
       }
     };
 
     this.socket.onerror = (error) => {
       console.error('WebSocket: Error', error);
+      ConnectionStore.setStatus('error', 'WebSocket error');
       this.emit('error', error);
     };
 
@@ -69,6 +82,11 @@ const WS = {
 
   setToken(token) {
     this.token = token;
+    if (token) {
+      localStorage.setItem('jcode_auth_token', token);
+    } else {
+      localStorage.removeItem('jcode_auth_token');
+    }
   },
 
   send(data) {
@@ -119,6 +137,7 @@ const WS = {
 
   disconnect() {
     if (this.socket) {
+      this.manualDisconnect = true;
       this.socket.close(1000, 'Client disconnect');
       this.socket = null;
     }

@@ -27,6 +27,19 @@ const API = {
     return this.request('/health');
   },
 
+  async pair(code, deviceName = 'jcode Web UI') {
+    const deviceId = localStorage.getItem('jcode_device_id') || `web-ui-${crypto.randomUUID?.() || Date.now()}`;
+    localStorage.setItem('jcode_device_id', deviceId);
+    return this.request('/pair', {
+      method: 'POST',
+      body: JSON.stringify({
+        code,
+        device_id: deviceId,
+        device_name: deviceName
+      }),
+    });
+  },
+
   // Session operations
   async listSessions() {
     return this.request('/api/sessions');
