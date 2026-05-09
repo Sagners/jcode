@@ -133,7 +133,37 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 8: CSS Loading
+  // Test 8: Runtime Button
+  currentTest = 'Runtime Button';
+  try {
+    const runtimeBtn = await page.$('#openRuntimeBtn');
+    if (runtimeBtn) {
+      pass();
+    } else {
+      fail('Runtime button not found');
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 9: Mobile Horizontal Overflow
+  currentTest = 'Mobile Horizontal Overflow';
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(1000);
+    const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    if (!hasOverflow) {
+      pass();
+    } else {
+      fail('Mobile layout overflows horizontally');
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 10: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -147,7 +177,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 9: Console Errors Check (excluding expected 401 from API calls)
+  // Test 11: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {

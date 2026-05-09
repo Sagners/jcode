@@ -104,7 +104,33 @@ async function runTests() {
     fail('Toggle Files', e.message);
   }
 
-  // Test 4: Verify Surface Store exists
+  // Test 4: Open Runtime Button
+  console.log('\n--- Test: Open Runtime ---');
+  try {
+    const beforeCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+
+    await page.click('#openRuntimeBtn');
+    await page.waitForTimeout(500);
+
+    const afterCount = await page.evaluate(() => {
+      return window.SurfaceStore ? window.SurfaceStore.surfaces.length : -1;
+    });
+    const runtimeRendered = await page.$('.runtime-surface-body');
+
+    console.log('  Surfaces before:', beforeCount, 'after:', afterCount);
+
+    if (afterCount > beforeCount && runtimeRendered) {
+      pass('Open Runtime', `Surfaces: ${beforeCount} -> ${afterCount}`);
+    } else {
+      fail('Open Runtime', 'Runtime surface not created');
+    }
+  } catch (e) {
+    fail('Open Runtime', e.message);
+  }
+
+  // Test 5: Verify Surface Store exists
   console.log('\n--- Test: Surface Store Available ---');
   const storeExists = await page.evaluate(() => typeof SurfaceStore !== 'undefined');
   if (storeExists) {
@@ -113,7 +139,7 @@ async function runTests() {
     fail('Surface Store', 'Not found');
   }
 
-  // Test 5: Check for surface rendering in DOM
+  // Test 6: Check for surface rendering in DOM
   console.log('\n--- Test: Surface DOM Elements ---');
   try {
     const surfaceCount = await page.$$eval('.surface-container', els => els.length);

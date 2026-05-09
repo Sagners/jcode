@@ -314,6 +314,7 @@
         <div class="header-toolbar">
           <button class="toolbar-btn" id="newSessionBtn" title="New Session (Ctrl+N)">+ Session</button>
           <button class="toolbar-btn" id="toggleFilesBtn" title="Toggle Files (Ctrl+B)">📁</button>
+          <button class="toolbar-btn" id="openRuntimeBtn" title="Runtime Events">Runtime</button>
           <button class="toolbar-btn" id="openSettingsBtn" title="Settings (Ctrl+,)">⚙️</button>
         </div>
         <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle Theme (Ctrl+Shift+P)">
@@ -369,6 +370,7 @@
   <script src="js/stores/lanes.js"></script>
   <script src="js/stores/surfaces.js"></script>
   <script src="js/stores/workspace.js"></script>
+  <script src="js/stores/runtime.js"></script>
   <script src="js/api.js"></script>
   <script src="js/desktop.js"></script>
   <script src="js/websocket.js"></script>
@@ -386,6 +388,7 @@
   <script src="js/components/surfaces/SettingsSurface.js"></script>
   <script src="js/components/surfaces/AgentSessionSurface.js"></script>
   <script src="js/components/surfaces/WorkspaceFilesSurface.js"></script>
+  <script src="js/components/surfaces/RuntimeSurface.js"></script>
   <script src="js/components/workspace/WorkspaceController.js"></script>
   <script src="js/main.js"></script>
 
@@ -466,6 +469,7 @@
       const commandDefinitions = [
         { id: 'new-session', label: 'New Session', icon: '➕', shortcut: 'Ctrl+N', action: () => document.getElementById('newSessionBtn')?.click() },
         { id: 'toggle-files', label: 'Toggle Files Panel', icon: '📁', shortcut: 'Ctrl+B', action: () => document.getElementById('toggleFilesBtn')?.click() },
+        { id: 'runtime-events', label: 'Open Runtime Events', icon: '◇', action: () => document.getElementById('openRuntimeBtn')?.click() },
         { id: 'open-settings', label: 'Open Settings', icon: '⚙️', shortcut: 'Ctrl+,', action: () => document.getElementById('openSettingsBtn')?.click() },
         { id: 'toggle-theme', label: 'Toggle Theme', icon: '🎨', shortcut: 'Ctrl+Shift+P', action: () => { Theme.toggle(); updateThemeButton(); } },
         { id: 'toggle-theme-dark', label: 'Dark Theme', icon: '🌙', action: () => Theme.apply('dark') },

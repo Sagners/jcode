@@ -106,6 +106,7 @@ const App = {
 
   handleWebSocketMessage(data) {
     console.log('WebSocket message:', data);
+    this.recordRuntimeEvent(data);
 
     switch (data.type) {
       case 'session_created':
@@ -141,6 +142,7 @@ const App = {
 
       case 'pong':
         // Heartbeat response - connection is alive
+        RuntimeStore.updateMetrics({ phase: 'online' });
         break;
 
       case 'session':
@@ -150,6 +152,12 @@ const App = {
         break;
 
       case 'history':
+        RuntimeStore.updateMetrics({
+          provider: data.provider_name || data.provider_model || RuntimeStore.metrics.provider,
+          inputTokens: data.total_tokens?.[0] || RuntimeStore.metrics.inputTokens,
+          outputTokens: data.total_tokens?.[1] || RuntimeStore.metrics.outputTokens,
+          phase: data.activity?.is_processing ? 'processing' : 'ready'
+        });
         if (data.session_id) {
           localStorage.setItem('jcode_active_session_id', data.session_id);
         }
@@ -164,6 +172,41 @@ const App = {
             });
           });
         }
+        break;
+
+      case 'tokens':
+        RuntimeStore.updateMetrics({
+          inputTokens: data.input || 0,
+          outputTokens: data.output || 0
+        });
+        break;
+
+      case 'connection_type':
+        RuntimeStore.updateMetrics({ connectionType: data.connection });
+        break;
+
+      case 'connection_phase':
+        RuntimeStore.updateMetrics({ phase: data.phase || 'connecting' });
+        break;
+
+      case 'status_detail':
+        ConnectionStore.setStatus(ConnectionStore.status, data.detail);
+        break;
+
+      case 'upstream_provider':
+        RuntimeStore.updateMetrics({ provider: data.provider });
+        break;
+
+      case 'mcp_status':
+        RuntimeStore.updateMetrics({ mcpServers: data.servers || [] });
+        break;
+
+      case 'done':
+        RuntimeStore.updateMetrics({ phase: 'ready' });
+        break;
+
+      case 'error':
+        RuntimeStore.updateMetrics({ phase: 'error' });
         break;
 
       case 'text':
@@ -190,6 +233,13 @@ const App = {
       // Try HTTP health check
       const health = await API.health();
       console.log('Gateway health:', health);
+      RuntimeStore.updateMetrics({ phase: 'gateway reachable' });
+      RuntimeStore.addEvent({
+        type: 'gateway_health',
+        title: 'Gateway health check passed',
+        status: 'success',
+        detail: health.version || ''
+      });
       ConnectionStore.setGatewayHealth({
         reachable: true,
         version: health.version,
@@ -210,11 +260,86 @@ const App = {
       WS.connect();
     } catch (e) {
       console.log('Gateway not available:', e.message);
+      RuntimeStore.updateMetrics({ phase: 'offline' });
+      RuntimeStore.addEvent({
+        type: 'gateway_offline',
+        title: 'Gateway offline',
+        status: 'error',
+        detail: e.message
+      });
       ConnectionStore.setGatewayHealth({
         reachable: false,
         detail: this.gatewayOfflineDetail()
       });
       ConnectionStore.setStatus('disconnected', 'Gateway health check failed');
+    }
+  },
+
+  recordRuntimeEvent(data) {
+    if (typeof RuntimeStore === 'undefined' || !data?.type) return;
+
+    const eventMap = {
+      ack: ['Request acknowledged', 'info'],
+      history: ['History synchronized', 'success'],
+      tool_start: ['Tool started', 'running'],
+      tool_input: ['Tool input streaming', 'running'],
+      tool_exec: ['Tool executing', 'running'],
+      tool_done: [data.error ? 'Tool failed' : 'Tool completed', data.error ? 'error' : 'success'],
+      batch_progress: ['Batch progress', 'running'],
+      tokens: ['Token usage updated', 'info'],
+      connection_type: ['Transport selected', 'info'],
+      connection_phase: ['Connection phase', 'running'],
+      status_detail: ['Provider status', 'info'],
+      upstream_provider: ['Upstream provider', 'info'],
+      swarm_status: ['Swarm status updated', 'info'],
+      swarm_plan: ['Swarm plan synchronized', 'info'],
+      memory_injected: ['Memory injected', 'success'],
+      memory_activity: ['Memory activity', 'info'],
+      compaction: ['Context compacted', 'warning'],
+      mcp_status: ['MCP status updated', 'info'],
+      generated_image: ['Generated image', 'success'],
+      interrupted: ['Turn interrupted', 'warning'],
+      error: ['Gateway error', 'error'],
+      done: ['Turn completed', 'success']
+    };
+
+    const [title, status] = eventMap[data.type] || [`Event: ${data.type}`, 'info'];
+    RuntimeStore.addEvent({
+      type: data.type,
+      title,
+      status,
+      detail: this.runtimeEventDetail(data)
+    });
+  },
+
+  runtimeEventDetail(data) {
+    switch (data.type) {
+      case 'tool_start':
+      case 'tool_exec':
+      case 'tool_done':
+        return [data.name, data.error || data.output].filter(Boolean).join(' - ').slice(0, 220);
+      case 'tokens':
+        return `input ${data.input || 0}, output ${data.output || 0}`;
+      case 'connection_type':
+        return data.connection || '';
+      case 'connection_phase':
+        return data.phase || '';
+      case 'status_detail':
+        return data.detail || '';
+      case 'upstream_provider':
+        return data.provider || '';
+      case 'mcp_status':
+        return (data.servers || []).join(', ');
+      case 'memory_injected':
+        return `${data.count || 0} memories, ${data.prompt_chars || 0} chars`;
+      case 'compaction':
+        return [data.trigger, data.tokens_saved ? `${data.tokens_saved} tokens saved` : null].filter(Boolean).join(' - ');
+      case 'error':
+        return data.message || '';
+      case 'history':
+        return `${data.messages?.length || 0} messages`;
+      default:
+        return '';
     }
   },
 

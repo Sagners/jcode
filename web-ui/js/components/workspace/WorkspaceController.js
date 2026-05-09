@@ -196,6 +196,10 @@ const WorkspaceController = {
         body.appendChild(WorkspaceFilesSurface.render(surface));
         break;
 
+      case 'runtime':
+        body.appendChild(RuntimeSurface.render(surface));
+        break;
+
       default:
         body.innerHTML = `
           <div class="empty-state">
@@ -478,6 +482,10 @@ const WorkspaceController = {
       this.toggleFileTree();
     });
 
+    document.getElementById('openRuntimeBtn')?.addEventListener('click', () => {
+      this.openRuntimeSurface();
+    });
+
     document.getElementById('openSettingsBtn')?.addEventListener('click', () => {
       this.openSettingsSurface();
     });
@@ -579,6 +587,28 @@ const WorkspaceController = {
       const surface = SurfaceStore.createSurface({
         kind: 'settings',
         title: 'Settings'
+      });
+      lane.columns[0].surfaces.push(surface);
+      LaneStore.updateLane(lane.id, { columns: lane.columns });
+    }
+    this.renderActiveLane();
+  },
+
+  openRuntimeSurface() {
+    const lane = LaneStore.activeLane;
+    if (!lane?.columns[0]) {
+      const newLane = LaneStore.createLane({ name: 'Runtime' });
+      LaneStore.setActiveLane(newLane);
+      return this.openRuntimeSurface();
+    }
+
+    const existing = lane.columns[0].surfaces.find(s => s.kind === 'runtime');
+    if (existing) {
+      SurfaceStore.setActiveSurface(existing.id);
+    } else {
+      const surface = SurfaceStore.createSurface({
+        kind: 'runtime',
+        title: 'Runtime'
       });
       lane.columns[0].surfaces.push(surface);
       LaneStore.updateLane(lane.id, { columns: lane.columns });
