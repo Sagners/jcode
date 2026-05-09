@@ -19,8 +19,8 @@ const WS = {
     this.manualDisconnect = false;
     ConnectionStore.setStatus('connecting', 'Opening WebSocket');
 
-    // Build WebSocket URL with token if available
-    let wsUrl = 'ws://127.0.0.1:7643/ws';
+    // Build WebSocket URL from the same gateway base URL used by HTTP health/pair.
+    let wsUrl = API.websocketUrl('/ws');
     if (this.token) {
       wsUrl += `?token=${this.token}`;
     }

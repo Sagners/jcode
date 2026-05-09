@@ -110,6 +110,9 @@ const SettingsSurface = {
     const snapshot = ConnectionStore.snapshot();
     const connectionStatus = snapshot.connected ? 'Connected' : snapshot.gatewayReachable ? 'Needs pairing' : 'Gateway offline';
     const statusClass = snapshot.connected ? 'connected' : snapshot.connecting ? 'connecting' : 'disconnected';
+    const desktop = snapshot.desktop || DesktopBridge?.snapshot?.() || {};
+    const runtimeLabel = desktop.isTauri ? 'Tauri desktop' : 'Browser';
+    const jcodePath = desktop.jcodePath || 'Not detected on PATH';
 
     return `
       <div class="settings-section">
@@ -153,6 +156,28 @@ const SettingsSurface = {
         <button class="btn" id="reconnectBtn" style="margin-top: var(--space-4);">
           Reconnect
         </button>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">Desktop Runtime</h3>
+        <div class="desktop-runtime-grid">
+          <div class="runtime-item">
+            <span class="runtime-label">Shell</span>
+            <span class="runtime-value">${this.escapeHtml(runtimeLabel)}</span>
+          </div>
+          <div class="runtime-item">
+            <span class="runtime-label">Platform</span>
+            <span class="runtime-value">${this.escapeHtml(desktop.platform || 'web')}</span>
+          </div>
+          <div class="runtime-item runtime-item-wide">
+            <span class="runtime-label">jcode binary</span>
+            <span class="runtime-value">${this.escapeHtml(jcodePath)}</span>
+          </div>
+          <div class="runtime-item runtime-item-wide">
+            <span class="runtime-label">Start command</span>
+            <span class="runtime-value">${this.escapeHtml(desktop.jcodePath ? `"${desktop.jcodePath}" serve` : 'jcode serve')}</span>
+          </div>
+        </div>
       </div>
     `;
   },
@@ -377,12 +402,17 @@ const SettingsSurface = {
 
   async fetchGatewayVersion() {
     try {
-      const response = await fetch('http://127.0.0.1:7643/health');
-      const data = await response.json();
+      const data = await API.health();
       return data.version || 'Unknown';
     } catch (e) {
       return 'Gateway unreachable';
     }
+  },
+
+  escapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
   },
 
   showToast(message, isError = false) {

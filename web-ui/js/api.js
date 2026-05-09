@@ -40,86 +40,12 @@ const API = {
     });
   },
 
-  // Session operations
-  async listSessions() {
-    return this.request('/api/sessions');
-  },
-
-  async createSession(params = {}) {
-    return this.request('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-  },
-
-  async getSession(sessionId) {
-    return this.request(`/api/sessions/${sessionId}`);
-  },
-
-  async deleteSession(sessionId) {
-    return this.request(`/api/sessions/${sessionId}`, {
-      method: 'DELETE',
-    });
-  },
-
-  // Messages
-  async sendMessage(sessionId, content) {
-    return this.request(`/api/sessions/${sessionId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ content }),
-    });
-  },
-
-  async getMessages(sessionId) {
-    return this.request(`/api/sessions/${sessionId}/messages`);
-  },
-
-  // Workspaces
-  async listWorkspaces() {
-    return this.request('/api/workspaces');
-  },
-
-  async saveWorkspace(name, path) {
-    return this.request('/api/workspaces/save', {
-      method: 'POST',
-      body: JSON.stringify({ name, path }),
-    });
-  },
-
-  async selectWorkspace(path) {
-    return this.request('/api/workspaces/select', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    });
-  },
-
-  // Gateway
-  async gatewayHealth() {
-    return this.request('/api/gateway/health', { method: 'POST' });
-  },
-
-  async gatewayPair() {
-    return this.request('/api/gateway/pair', { method: 'POST' });
-  },
-
-  async gatewayStatus() {
-    return this.request('/api/gateway');
-  },
-
-  // Configuration
-  async getState() {
-    return this.request('/api/state');
-  },
-
-  async saveConfig(config) {
-    return this.request('/api/save', {
-      method: 'POST',
-      body: JSON.stringify(config),
-    });
-  },
-
-  async validate() {
-    return this.request('/api/validate', { method: 'POST' });
+  websocketUrl(path = '/ws') {
+    const url = new URL(this.baseUrl);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = path;
+    url.search = '';
+    return url.toString();
   }
 };
 

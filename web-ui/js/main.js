@@ -9,6 +9,10 @@ const App = {
       API.baseUrl = savedGatewayUrl;
     }
 
+    if (typeof DesktopBridge !== 'undefined') {
+      await DesktopBridge.init();
+    }
+
     // Initialize connection monitoring
     this.initConnection();
 
@@ -139,9 +143,26 @@ const App = {
         // Heartbeat response - connection is alive
         break;
 
-      case 'session_id':
+      case 'session':
         if (data.session_id) {
           localStorage.setItem('jcode_active_session_id', data.session_id);
+        }
+        break;
+
+      case 'history':
+        if (data.session_id) {
+          localStorage.setItem('jcode_active_session_id', data.session_id);
+        }
+        if (Array.isArray(data.messages)) {
+          data.messages.forEach((message, index) => {
+            MessagesStore.addMessage({
+              id: `${data.session_id || 'main'}-${index}`,
+              sessionId: data.session_id || 'main',
+              role: message.role || 'assistant',
+              content: message.content || '',
+              timestamp: Date.now()
+            });
+          });
         }
         break;
 
@@ -191,41 +212,18 @@ const App = {
       console.log('Gateway not available:', e.message);
       ConnectionStore.setGatewayHealth({
         reachable: false,
-        detail: 'Start jcode serve with gateway enabled'
+        detail: this.gatewayOfflineDetail()
       });
       ConnectionStore.setStatus('disconnected', 'Gateway health check failed');
     }
   },
 
-  async autoPair() {
-    try {
-      // Generate a device ID
-      const deviceId = 'web-ui-' + Math.random().toString(36).substr(2, 9);
-      const deviceName = 'jcode Web UI';
-
-      // Try to pair (will work if there's a pending code from jcode pair)
-      const pairResponse = await fetch('http://127.0.0.1:7643/pair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: '000000',  // Placeholder - gateway will reject if no valid code
-          device_id: deviceId,
-          device_name: deviceName
-        })
-      });
-
-      if (pairResponse.ok) {
-        const data = await pairResponse.json();
-        if (data.token) {
-          localStorage.setItem('jcode_auth_token', data.token);
-          console.log('Auto-paired successfully');
-          return data.token;
-        }
-      }
-    } catch (e) {
-      console.log('Auto-pairing failed:', e.message);
+  gatewayOfflineDetail() {
+    const desktop = DesktopBridge?.snapshot?.();
+    if (desktop?.isTauri && desktop.jcodePath) {
+      return `Start the gateway with: "${desktop.jcodePath}" serve`;
     }
-    return null;
+    return 'Start jcode serve with gateway enabled';
   },
 
   registerRoutes() {

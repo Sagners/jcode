@@ -1,5 +1,13 @@
 use tauri::Manager;
 
+#[derive(serde::Serialize)]
+struct DesktopContext {
+    platform: String,
+    app_version: String,
+    jcode_path: Option<String>,
+    gateway_url: String,
+}
+
 #[tauri::command]
 fn get_platform() -> String {
     #[cfg(target_os = "windows")]
@@ -15,6 +23,35 @@ fn get_platform() -> String {
 #[tauri::command]
 fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+fn get_desktop_context() -> DesktopContext {
+    DesktopContext {
+        platform: get_platform(),
+        app_version: get_app_version(),
+        jcode_path: find_jcode_binary(),
+        gateway_url: "http://127.0.0.1:7643".to_string(),
+    }
+}
+
+fn find_jcode_binary() -> Option<String> {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if current_exe
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("jcode"))
+        {
+            return Some(current_exe.display().to_string());
+        }
+    }
+
+    let exe_name = if cfg!(windows) { "jcode.exe" } else { "jcode" };
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(exe_name))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.display().to_string())
 }
 
 #[tauri::command]
@@ -77,6 +114,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_platform,
             get_app_version,
+            get_desktop_context,
             set_window_title,
             minimize_window,
             maximize_window,

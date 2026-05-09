@@ -66,6 +66,35 @@ async function runTests() {
   }
 
   // Test 4: Switch to Model Tab
+  console.log('\n--- Test: Gateway URL drives WebSocket URL ---');
+  try {
+    const wsUrl = await page.evaluate(() => {
+      API.baseUrl = 'http://127.0.0.1:8765';
+      return API.websocketUrl('/ws');
+    });
+    if (wsUrl === 'ws://127.0.0.1:8765/ws') {
+      pass('Gateway WebSocket URL', wsUrl);
+    } else {
+      fail('Gateway WebSocket URL', `Unexpected URL: ${wsUrl}`);
+    }
+  } catch (e) {
+    fail('Gateway WebSocket URL', e.message);
+  }
+
+  // Test 5: Runtime context appears in Connection Tab
+  console.log('\n--- Test: Desktop Runtime Section ---');
+  try {
+    const content = await page.textContent('#settingsContent');
+    if (content.includes('Desktop Runtime') && content.includes('Start command')) {
+      pass('Desktop Runtime Section', 'Rendered');
+    } else {
+      fail('Desktop Runtime Section', 'Missing runtime diagnostics');
+    }
+  } catch (e) {
+    fail('Desktop Runtime Section', e.message);
+  }
+
+  // Test 6: Switch to Model Tab
   console.log('\n--- Test: Model Tab ---');
   try {
     await page.click('.settings-tab[data-tab="model"]');
@@ -82,7 +111,7 @@ async function runTests() {
     fail('Model Tab', e.message);
   }
 
-  // Test 5: Shortcuts Tab
+  // Test 7: Shortcuts Tab
   console.log('\n--- Test: Shortcuts Tab ---');
   try {
     await page.click('.settings-tab[data-tab="shortcuts"]');
@@ -99,7 +128,7 @@ async function runTests() {
     fail('Shortcuts Tab', e.message);
   }
 
-  // Test 6: About Tab
+  // Test 8: About Tab
   console.log('\n--- Test: About Tab ---');
   try {
     await page.click('.settings-tab[data-tab="about"]');
@@ -116,7 +145,7 @@ async function runTests() {
     fail('About Tab', e.message);
   }
 
-  // Test 7: Reconnect Button
+  // Test 9: Reconnect Button
   console.log('\n--- Test: Reconnect Button ---');
   try {
     // Switch to connection tab first
@@ -133,7 +162,7 @@ async function runTests() {
     fail('Reconnect Button', e.message);
   }
 
-  // Test 8: Close Settings Surface
+  // Test 10: Close Settings Surface
   console.log('\n--- Test: Close Settings ---');
   try {
     const surfaceCountBefore = await page.$$eval('.surface-container', els => els.length);

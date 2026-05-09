@@ -8,6 +8,7 @@ const ConnectionStore = {
   status: 'idle',
   detail: 'Not connected',
   version: null,
+  desktop: null,
   listeners: [],
 
   setConnected(value) {
@@ -47,6 +48,11 @@ const ConnectionStore = {
     this.notify();
   },
 
+  setDesktopContext(context) {
+    this.desktop = context;
+    this.notify();
+  },
+
   subscribe(callback) {
     this.listeners.push(callback);
     // Immediately call with current state
@@ -64,7 +70,8 @@ const ConnectionStore = {
       authenticated: this.authenticated,
       status: this.status,
       detail: this.detail,
-      version: this.version
+      version: this.version,
+      desktop: this.desktop
     };
   },
 
