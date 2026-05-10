@@ -143,6 +143,8 @@ const WorkspaceController = {
       return columnEl;
     }
 
+    columnEl.classList.toggle('column-single-surface', column.surfaces.length === 1);
+
     // Render surfaces based on kind
     column.surfaces.forEach((surface, surfIndex) => {
       const surfaceEl = this.createSurfaceElement(surface, surfIndex);

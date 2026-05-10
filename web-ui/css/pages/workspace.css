@@ -202,6 +202,11 @@
   padding: var(--space-4);
   gap: var(--space-4);
   overflow-x: auto;
+  min-height: 0;
+}
+
+.column-single-surface > .surface-container {
+  flex: 1;
 }
 
 /* ===== Surface Container ===== */
@@ -216,6 +221,10 @@
   position: relative;
   transition: all var(--transition-normal);
   animation: scaleIn 0.2s ease-out;
+}
+
+.agent-session-surface {
+  min-height: min(680px, calc(100vh - 132px));
 }
 
 .surface-container::before {
@@ -327,6 +336,7 @@
   color: var(--text-primary);
   font-size: var(--text-base);
   line-height: 1.6;
+  min-height: 0;
 }
 
 .surface-footer {
@@ -394,6 +404,7 @@
   display: flex;
   flex-direction: column;
   min-height: 360px;
+  height: 100%;
 }
 
 .session-messages {
@@ -719,6 +730,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 .toolbar-btn {
@@ -735,6 +747,8 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+  min-height: 32px;
+  white-space: nowrap;
 }
 
 .toolbar-btn:hover {
@@ -1461,23 +1475,36 @@
   .header-actions {
     width: 100%;
     margin-left: 0;
-    gap: var(--space-2);
-    justify-content: space-between;
+    gap: var(--space-1);
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
   }
 
   .header-toolbar {
-    flex: 1;
-    min-width: 0;
-    overflow-x: auto;
+    flex: 0 0 auto;
+    min-width: max-content;
+    overflow: visible;
+    scrollbar-width: none;
+    gap: var(--space-1);
+  }
+
+  .header-actions::-webkit-scrollbar,
+  .header-toolbar::-webkit-scrollbar {
+    display: none;
   }
 
   .toolbar-btn {
-    min-height: 36px;
+    min-height: 34px;
+    padding: var(--space-2) var(--space-2);
     white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .model-select {
-    max-width: 104px;
+    max-width: 88px;
+    flex: 0 0 auto;
   }
 
   .workspace-body {
