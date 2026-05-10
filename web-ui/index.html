@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/tailwind.generated.css">
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/pages/chat.css">
@@ -302,7 +303,7 @@
   </div>
 
   <!-- Main Workspace -->
-  <div class="workspace-layout">
+  <div class="workspace-layout min-h-screen">
     <!-- Header -->
     <header class="header">
       <div class="header-brand">jcode</div>
@@ -310,8 +311,8 @@
         <span class="status-dot disconnected" id="connectionDot"></span>
         <span id="connectionStatus">Disconnected</span>
       </div>
-      <div class="header-actions">
-        <div class="header-toolbar">
+      <div class="header-actions scrollbar-none">
+        <div class="header-toolbar scrollbar-none">
           <button class="toolbar-btn" id="newSessionBtn" title="New Session (Ctrl+N)">+ Session</button>
           <button class="toolbar-btn" id="toggleFilesBtn" title="Toggle Files (Ctrl+B)">📁</button>
           <button class="toolbar-btn" id="openRuntimeBtn" title="Runtime Events">Runtime</button>

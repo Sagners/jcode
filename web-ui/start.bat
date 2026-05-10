@@ -9,13 +9,22 @@ echo.
 
 REM Get the directory where this script is located
 set SCRIPT_DIR=%~dp0
-set WEB_UI_DIR=%SCRIPT_DIR%web-ui
+set WEB_UI_DIR=%SCRIPT_DIR%
 
 REM Check if jcode is installed
 where jcode >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] jcode is not found in PATH
     echo Please install jcode first: https://github.com/1jehuang/jcode
+    pause
+    exit /b 1
+)
+
+REM Build Tailwind CSS and sync dist
+cd /d "%WEB_UI_DIR%"
+call npm run build
+if errorlevel 1 (
+    echo [ERROR] Web UI build failed
     pause
     exit /b 1
 )

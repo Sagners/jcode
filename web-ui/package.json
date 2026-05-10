@@ -1,5 +1,15 @@
 {
+  "scripts": {
+    "build": "npm run build:css && node ./scripts/sync-dist.mjs",
+    "build:css": "tailwindcss -i ./css/tailwind.css -o ./css/tailwind.generated.css --minify",
+    "build:dist": "node ./scripts/sync-dist.mjs",
+    "watch:css": "tailwindcss -i ./css/tailwind.css -o ./css/tailwind.generated.css --watch"
+  },
   "dependencies": {
     "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.0",
+    "tailwindcss": "^4.3.0"
   }
 }

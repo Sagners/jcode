@@ -12,8 +12,15 @@ echo.
 REM Get the directory where this script is located
 set SCRIPT_DIR=%~dp0
 
-REM Start Python HTTP server on port 9527
+REM Build Tailwind CSS and sync dist
 cd /d "%SCRIPT_DIR%"
+call npm run build
+if errorlevel 1 (
+  echo Web UI build failed.
+  exit /b 1
+)
+
+REM Start Python HTTP server on port 9527
 start "jcode-web-server" python -m http.server 9527
 
 echo Server started!

@@ -122,14 +122,26 @@ if (-not $gatewayRunning) {
 }
 
 # ============================================
-# Step 4: Start web UI dev server
+# Step 4: Build Tailwind CSS
 # ============================================
-Write-Host "[4/4] Starting web UI on port $WebUIPort..." -ForegroundColor Yellow
-
+Write-Host "[4/5] Building Tailwind CSS..." -ForegroundColor Yellow
 $webUIPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($webUIPath -eq "") {
     $webUIPath = $PSScriptRoot
 }
+
+Push-Location $webUIPath
+try {
+    npm run build | Out-Host
+    Write-Host "    Tailwind CSS built and dist synced" -ForegroundColor Green
+} finally {
+    Pop-Location
+}
+
+# ============================================
+# Step 5: Start web UI dev server
+# ============================================
+Write-Host "[5/5] Starting web UI on port $WebUIPort..." -ForegroundColor Yellow
 
 $serverJob = Start-Job -ScriptBlock {
     param($port, $webUIPath)

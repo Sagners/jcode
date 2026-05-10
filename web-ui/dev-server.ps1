@@ -29,8 +29,18 @@ if ($portInUse) {
     }
 }
 
+# Build Tailwind CSS and sync dist before serving
+Write-Host "[1/2] Building Tailwind CSS..." -ForegroundColor Yellow
+Push-Location $PSScriptRoot
+try {
+    npm run build | Out-Host
+    Write-Host "[OK] Tailwind CSS built and dist synced" -ForegroundColor Green
+} finally {
+    Pop-Location
+}
+
 # Start HTTP server
-Write-Host "[1/1] Starting development server on port $Port..." -ForegroundColor Yellow
+Write-Host "[2/2] Starting development server on port $Port..." -ForegroundColor Yellow
 $serverJob = Start-Job -ScriptBlock {
     param($port, $webUIPath)
     Set-Location $webUIPath
