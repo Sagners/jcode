@@ -1215,13 +1215,51 @@
   overflow-wrap: anywhere;
 }
 
+.runtime-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.runtime-filter {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.runtime-filter:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border);
+}
+
+.runtime-filter.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.11);
+  border-color: rgba(var(--accent-rgb), 0.45);
+}
+
 .runtime-event-list {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  max-height: min(52vh, 560px);
   overflow-y: auto;
   padding-left: var(--space-3);
+  padding-right: var(--space-1);
 }
 
 .runtime-event-list::before {
@@ -1264,6 +1302,12 @@
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.runtime-event:hover .runtime-event-main {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(var(--accent-rgb), 0.3);
 }
 
 .runtime-event-head {
@@ -1500,6 +1544,12 @@
   .runtime-health-strip,
   .runtime-context-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runtime-filter-bar {
+    margin-right: calc(var(--space-3) * -1);
+    border-right: 0;
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
   }
 
   .runtime-event-head {

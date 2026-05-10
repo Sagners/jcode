@@ -98,6 +98,8 @@ const WorkspaceController = {
   },
 
   renderLaneContent(lane) {
+    this.cleanupSurfaceTree(this.container);
+
     // Clear container
     this.container.innerHTML = '';
 
@@ -301,6 +303,19 @@ const WorkspaceController = {
     }
   },
 
+  cleanupSurfaceTree(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-surface-id]').forEach(el => {
+      if (typeof el.__surfaceCleanup === 'function') {
+        try {
+          el.__surfaceCleanup();
+        } catch (error) {
+          console.warn('Surface cleanup failed:', error);
+        }
+      }
+    });
+  },
+
   sendMessage(sessionId, content) {
     if (WS.getState() === 'open') {
       WS.send({
@@ -312,6 +327,8 @@ const WorkspaceController = {
   },
 
   renderEmptyState() {
+    this.cleanupSurfaceTree(this.container);
+
     this.container.innerHTML = `
       <div class="lane-content-empty">
         <svg class="lane-content-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -328,6 +345,8 @@ const WorkspaceController = {
   },
 
   renderLaneEmptyState(lane) {
+    this.cleanupSurfaceTree(this.container);
+
     this.container.innerHTML = `
       <div class="lane-content-empty">
         <svg class="lane-content-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">

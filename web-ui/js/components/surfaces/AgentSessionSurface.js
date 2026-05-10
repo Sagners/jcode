@@ -3,8 +3,10 @@
 const AgentSessionSurface = {
   // Store active surface IDs for message routing
   activeSurfaces: new Set(),
+  cleanups: new Map(),
 
   render(surface) {
+    this.teardown(surface.id);
     // Track this surface
     this.activeSurfaces.add(surface.id);
 
@@ -48,6 +50,7 @@ const AgentSessionSurface = {
     this.setupEventListeners(container, surface);
     this.subscribeToMessages(surface.id);
     this.bindConnectionState(container, surface);
+    container.__surfaceCleanup = () => this.teardown(surface.id);
 
     return container;
   },
@@ -94,7 +97,7 @@ const AgentSessionSurface = {
     const bannerText = banner?.querySelector('.session-connection-text');
     const dot = banner?.querySelector('.status-dot');
 
-    ConnectionStore.subscribe((state) => {
+    const unsubscribe = ConnectionStore.subscribe((state) => {
       const canSend = state.connected;
       if (input) {
         input.disabled = !canSend;
@@ -117,6 +120,7 @@ const AgentSessionSurface = {
         dot.className = `status-dot ${state.connecting ? 'connecting' : state.connected ? 'connected' : 'disconnected'}`;
       }
     });
+    this.addCleanup(surface.id, unsubscribe);
   },
 
   sendMessage(sessionId, content) {
@@ -180,7 +184,7 @@ const AgentSessionSurface = {
   },
 
   subscribeToMessages(sessionId) {
-    WS.on('message', (data) => {
+    const unsubscribe = WS.on('message', (data) => {
       console.log('WebSocket message received:', data);
       if (data.type === 'message' || data.type === 'chunk' || data.type === 'assistant' || data.type === 'response') {
         if (data.session_id === sessionId || !data.session_id) {
@@ -188,6 +192,21 @@ const AgentSessionSurface = {
         }
       }
     });
+    this.addCleanup(sessionId, unsubscribe);
+  },
+
+  addCleanup(surfaceId, cleanup) {
+    if (typeof cleanup !== 'function') return;
+    const cleanups = this.cleanups.get(surfaceId) || [];
+    cleanups.push(cleanup);
+    this.cleanups.set(surfaceId, cleanups);
+  },
+
+  teardown(surfaceId) {
+    const cleanups = this.cleanups.get(surfaceId) || [];
+    cleanups.forEach(cleanup => cleanup());
+    this.cleanups.delete(surfaceId);
+    this.activeSurfaces.delete(surfaceId);
   },
 
   handleIncomingMessage(data, sessionId) {

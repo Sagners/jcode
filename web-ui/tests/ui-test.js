@@ -9,17 +9,19 @@ async function runTests() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
+  page.setDefaultTimeout(5000);
 
   const results = [];
-  const pass = () => { results.push({ name: currentTest, status: 'PASS' }); };
-  const fail = (msg) => { results.push({ name: currentTest, status: 'FAIL', msg }); };
+  const pass = () => { results.push({ name: currentTest, status: 'PASS' }); console.log('✓ ' + currentTest); };
+  const fail = (msg) => { results.push({ name: currentTest, status: 'FAIL', msg }); console.log('✗ ' + currentTest + ': ' + msg); };
 
   let currentTest = '';
 
   // Test 1: Load Web UI
   currentTest = 'Load Web UI';
   try {
-    await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 10000 });
+    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 10000 });
+    await page.waitForTimeout(1500);
     const title = await page.title();
     if (title.includes('jcode')) {
       console.log('✓ Page loaded, title:', title);

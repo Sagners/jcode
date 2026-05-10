@@ -2,8 +2,10 @@
 
 const SettingsSurface = {
   activeTab: 'general',
+  cleanup: null,
 
   render(surface) {
+    this.teardown();
     const container = document.createElement('div');
     container.className = 'settings-body';
     container.innerHTML = `
@@ -29,12 +31,14 @@ const SettingsSurface = {
 
     // Render initial tab
     this.switchTab(this.activeTab, container);
+    container.__surfaceCleanup = () => this.teardown();
 
     return container;
   },
 
   switchTab(tabName, container) {
     this.activeTab = tabName;
+    this.teardown();
 
     // Update active tab styling
     container.querySelectorAll('.settings-tab').forEach(tab => {
@@ -383,7 +387,7 @@ const SettingsSurface = {
 
     // Subscribe to connection store for real-time status updates
     if (tabName === 'connection') {
-      ConnectionStore.subscribe((state) => {
+      this.cleanup = ConnectionStore.subscribe((state) => {
         const statusEl = content.querySelector('.status-dot');
         const statusText = content.querySelector('#connectionStatusLabel');
         const detailText = content.querySelector('#connectionDetail');
@@ -398,6 +402,13 @@ const SettingsSurface = {
         }
       });
     }
+  },
+
+  teardown() {
+    if (typeof this.cleanup === 'function') {
+      this.cleanup();
+    }
+    this.cleanup = null;
   },
 
   async fetchGatewayVersion() {

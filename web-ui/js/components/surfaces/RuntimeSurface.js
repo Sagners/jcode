@@ -1,7 +1,11 @@
 // web-ui/js/components/surfaces/RuntimeSurface.js
 
 const RuntimeSurface = {
+  activeFilter: 'all',
+  unsubscribe: null,
+
   render(surface) {
+    this.teardown();
     const container = document.createElement('div');
     container.className = 'runtime-surface-body';
     container.dataset.surfaceId = surface.id;
@@ -65,12 +69,22 @@ const RuntimeSurface = {
           </div>
         </section>
       </div>
+      <div class="runtime-filter-bar" id="runtimeFilters_${surface.id}">
+        ${this.renderFilterButton('all', 'All')}
+        ${this.renderFilterButton('running', 'Running')}
+        ${this.renderFilterButton('warning', 'Warnings')}
+        ${this.renderFilterButton('error', 'Errors')}
+        ${this.renderFilterButton('success', 'Complete')}
+        ${this.renderFilterButton('memory', 'Memory')}
+        ${this.renderFilterButton('compaction', 'Compaction')}
+      </div>
       <div class="runtime-event-list" id="runtimeEvents_${surface.id}">
         ${this.renderEmpty('Waiting for gateway events.')}
       </div>
     `;
 
     this.bind(container, surface);
+    container.__surfaceCleanup = () => this.teardown();
     return container;
   },
 
@@ -88,9 +102,10 @@ const RuntimeSurface = {
     const toolHintEl = container.querySelector(`#runtimeToolHint_${surface.id}`);
     const contextEl = container.querySelector(`#runtimeContext_${surface.id}`);
     const contextHintEl = container.querySelector(`#runtimeContextHint_${surface.id}`);
+    const filtersEl = container.querySelector(`#runtimeFilters_${surface.id}`);
     const eventsEl = container.querySelector(`#runtimeEvents_${surface.id}`);
 
-    RuntimeStore.subscribe(({ events, metrics }) => {
+    this.unsubscribe = RuntimeStore.subscribe(({ events, metrics }) => {
       if (phaseEl) phaseEl.textContent = metrics.phase || 'idle';
       if (transportEl) transportEl.textContent = metrics.connectionType || 'unknown';
       if (providerEl) providerEl.textContent = metrics.provider || 'unknown';
@@ -114,12 +129,33 @@ const RuntimeSurface = {
       }
 
       if (!eventsEl) return;
-      if (!events.length) {
+      const filteredEvents = this.filterEvents(events);
+      if (!filteredEvents.length) {
         eventsEl.innerHTML = this.renderEmpty('Waiting for gateway events.');
         return;
       }
 
-      eventsEl.innerHTML = events.map(event => this.renderEvent(event)).join('');
+      eventsEl.innerHTML = filteredEvents.map(event => this.renderEvent(event)).join('');
+
+      if (filtersEl) {
+        filtersEl.querySelectorAll('[data-runtime-filter]').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.runtimeFilter === this.activeFilter);
+        });
+      }
+    });
+
+    filtersEl?.querySelectorAll('[data-runtime-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.activeFilter = btn.dataset.runtimeFilter || 'all';
+        const state = RuntimeStore.snapshot();
+        const events = this.filterEvents(state.events);
+        if (eventsEl) {
+          eventsEl.innerHTML = events.length ? events.map(event => this.renderEvent(event)).join('') : this.renderEmpty('Waiting for gateway events.');
+        }
+        filtersEl.querySelectorAll('[data-runtime-filter]').forEach(node => {
+          node.classList.toggle('active', node.dataset.runtimeFilter === this.activeFilter);
+        });
+      });
     });
   },
 
@@ -127,7 +163,7 @@ const RuntimeSurface = {
     const time = new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const detail = event.detail ? `<p>${this.escapeHtml(event.detail)}</p>` : '';
     return `
-      <div class="runtime-event runtime-event-${this.escapeHtml(event.status)}">
+      <div class="runtime-event runtime-event-${this.classToken(event.status)}">
         <span class="runtime-event-pin"></span>
         <div class="runtime-event-main">
           <div class="runtime-event-head">
@@ -140,9 +176,17 @@ const RuntimeSurface = {
     `;
   },
 
+  renderFilterButton(value, label) {
+    return `
+      <button type="button" class="runtime-filter${value === this.activeFilter ? ' active' : ''}" data-runtime-filter="${this.escapeHtml(value)}">
+        ${this.escapeHtml(label)}
+      </button>
+    `;
+  },
+
   renderTool(tool) {
     return `
-      <div class="runtime-tool runtime-tool-${this.escapeHtml(tool.status)}">
+      <div class="runtime-tool runtime-tool-${this.classToken(tool.status)}">
         <span class="runtime-tool-dot"></span>
         <strong>${this.escapeHtml(tool.name)}</strong>
         <span>${this.escapeHtml(tool.status)}</span>
@@ -188,6 +232,37 @@ const RuntimeSurface = {
     if (!metrics.lastEventAt) return 'Waiting for gateway events';
     const time = new Date(metrics.lastEventAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     return metrics.lastError ? `Last event ${time} - ${metrics.lastError}` : `Last event ${time}`;
+  },
+
+  filterEvents(events) {
+    if (!Array.isArray(events)) return [];
+    switch (this.activeFilter) {
+      case 'running':
+        return events.filter(event => event.status === 'running');
+      case 'warning':
+        return events.filter(event => event.status === 'warning');
+      case 'error':
+        return events.filter(event => event.status === 'error');
+      case 'success':
+        return events.filter(event => event.status === 'success');
+      case 'memory':
+        return events.filter(event => event.type === 'memory_injected' || event.type === 'memory_activity');
+      case 'compaction':
+        return events.filter(event => event.type === 'compaction');
+      default:
+        return events;
+    }
+  },
+
+  classToken(value) {
+    return String(value || 'info').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+  },
+
+  teardown() {
+    if (typeof this.unsubscribe === 'function') {
+      this.unsubscribe();
+    }
+    this.unsubscribe = null;
   },
 
   escapeHtml(value) {

@@ -128,13 +128,18 @@ async function runTests() {
     const runtimeRendered = await page.$('.runtime-surface-body');
     const toolRendered = await page.$('.runtime-tool');
     const contextRendered = await page.$('.runtime-context-grid');
+    const filterRendered = await page.$('.runtime-filter[data-runtime-filter="success"]');
+    const listenerCountBefore = await page.evaluate(() => RuntimeStore.listeners.length);
+    await page.evaluate(() => WorkspaceController.renderActiveLane());
+    await page.waitForTimeout(200);
+    const listenerCountAfter = await page.evaluate(() => RuntimeStore.listeners.length);
 
     console.log('  Surfaces before:', beforeCount, 'after:', afterCount);
 
-    if (afterCount > beforeCount && runtimeRendered && toolRendered && contextRendered) {
+    if (afterCount > beforeCount && runtimeRendered && toolRendered && contextRendered && filterRendered && listenerCountAfter <= listenerCountBefore) {
       pass('Open Runtime', `Surfaces: ${beforeCount} -> ${afterCount}`);
     } else {
-      fail('Open Runtime', 'Runtime surface did not render operational sections');
+      fail('Open Runtime', `Runtime surface did not render operational sections or leaked listeners: ${listenerCountBefore} -> ${listenerCountAfter}`);
     }
   } catch (e) {
     fail('Open Runtime', e.message);
