@@ -17,12 +17,17 @@ const AgentSessionSurface = {
     const messagesId = `messages_${surface.id}`;
     container.innerHTML = `
       <div class="session-messages" id="${messagesId}">
-        <div class="empty-state">
+        <div class="empty-state session-empty-state">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
           <p>Start a conversation</p>
           <p class="session-empty-hint">Connect to the gateway, then send a message to begin.</p>
+          <div class="session-empty-actions">
+            <button class="session-empty-action" data-action="connection">Connection</button>
+            <button class="session-empty-action" data-action="runtime">Runtime</button>
+            <button class="session-empty-action" data-action="starter">Starter prompt</button>
+          </div>
         </div>
       </div>
       <div class="session-connection-banner" id="connectionBanner_${surface.id}" hidden>
@@ -81,6 +86,26 @@ const AgentSessionSurface = {
         }
       });
     }
+
+    container.querySelector('[data-action="connection"]')?.addEventListener('click', () => {
+      if (typeof WorkspaceController !== 'undefined') {
+        WorkspaceController.openSettingsSurface('connection');
+      }
+    });
+
+    container.querySelector('[data-action="runtime"]')?.addEventListener('click', () => {
+      if (typeof WorkspaceController !== 'undefined') {
+        WorkspaceController.openRuntimeSurface();
+      }
+    });
+
+    container.querySelector('[data-action="starter"]')?.addEventListener('click', () => {
+      if (!input) return;
+      input.value = 'Summarize the current workspace state and recommend the next action.';
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+      input.focus();
+    });
 
     const settingsBtn = container.querySelector(`#openConnectionSettings_${surface.id}`);
     settingsBtn?.addEventListener('click', () => {

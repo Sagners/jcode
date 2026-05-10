@@ -145,7 +145,22 @@ async function runTests() {
     fail('Open Runtime', e.message);
   }
 
-  // Test 5: Verify Surface Store exists
+  // Test 5: Session Empty Actions
+  console.log('\n--- Test: Session Empty Actions ---');
+  try {
+    await page.evaluate(() => document.querySelector('.session-empty-action[data-action="starter"]')?.click());
+    const composerValue = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-input')?.value || '');
+    const actionCount = await page.$$eval('.session-empty-action', els => els.length);
+    if (composerValue.includes('Summarize') && actionCount >= 3) {
+      pass('Session Empty Actions', `Actions: ${actionCount}`);
+    } else {
+      fail('Session Empty Actions', `Composer value: ${composerValue || 'empty'}, actions: ${actionCount}`);
+    }
+  } catch (e) {
+    fail('Session Empty Actions', e.message);
+  }
+
+  // Test 6: Verify Surface Store exists
   console.log('\n--- Test: Surface Store Available ---');
   const storeExists = await page.evaluate(() => typeof SurfaceStore !== 'undefined');
   if (storeExists) {
@@ -154,7 +169,7 @@ async function runTests() {
     fail('Surface Store', 'Not found');
   }
 
-  // Test 6: Check for surface rendering in DOM
+  // Test 7: Check for surface rendering in DOM
   console.log('\n--- Test: Surface DOM Elements ---');
   try {
     const surfaceCount = await page.$$eval('.surface-container', els => els.length);
