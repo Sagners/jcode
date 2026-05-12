@@ -100,10 +100,16 @@ async function runTests() {
     await page.click('.settings-tab[data-tab="model"]');
     await page.waitForTimeout(200);
 
-    const modelSelect = await page.$('#settingDefaultModel');
+    const modelSelect = await page.$('#setting_defaultModel');
     if (modelSelect) {
       const value = await modelSelect.inputValue();
-      pass('Model Tab', `Default model: ${value}`);
+      const planning = await page.$('#setting_planningModel');
+      const preview = await page.textContent('#modelRoutePreview');
+      if (planning && preview.includes('"planning"')) {
+        pass('Model Tab', `Default model: ${value}`);
+      } else {
+        fail('Model Tab', 'Routing fields incomplete');
+      }
     } else {
       fail('Model Tab', 'Model select not found');
     }
@@ -111,7 +117,27 @@ async function runTests() {
     fail('Model Tab', e.message);
   }
 
-  // Test 7: Shortcuts Tab
+  // Test 7: Model routing persistence
+  console.log('\n--- Test: Model Routing Persistence ---');
+  try {
+    await page.selectOption('#setting_executionModel', 'gpt-5.3-codex-spark');
+    await page.evaluate(() => {
+      const input = document.querySelector('input[name="routingMode"][value="fallback"]');
+      input.checked = true;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.click('#saveModelRoutingBtn');
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('jcode_model_routing')));
+    if (stored.executionModel === 'gpt-5.3-codex-spark' && stored.routingMode === 'fallback') {
+      pass('Model Routing Persistence', `${stored.routingMode}: ${stored.executionModel}`);
+    } else {
+      fail('Model Routing Persistence', 'Stored route did not match selection');
+    }
+  } catch (e) {
+    fail('Model Routing Persistence', e.message);
+  }
+
+  // Test 8: Shortcuts Tab
   console.log('\n--- Test: Shortcuts Tab ---');
   try {
     await page.click('.settings-tab[data-tab="shortcuts"]');
@@ -128,7 +154,7 @@ async function runTests() {
     fail('Shortcuts Tab', e.message);
   }
 
-  // Test 8: About Tab
+  // Test 9: About Tab
   console.log('\n--- Test: About Tab ---');
   try {
     await page.click('.settings-tab[data-tab="about"]');
@@ -145,7 +171,7 @@ async function runTests() {
     fail('About Tab', e.message);
   }
 
-  // Test 9: Reconnect Button
+  // Test 10: Reconnect Button
   console.log('\n--- Test: Reconnect Button ---');
   try {
     // Switch to connection tab first
@@ -162,7 +188,7 @@ async function runTests() {
     fail('Reconnect Button', e.message);
   }
 
-  // Test 10: Close Settings Surface
+  // Test 11: Close Settings Surface
   console.log('\n--- Test: Close Settings ---');
   try {
     const surfaceCountBefore = await page.$$eval('.surface-container', els => els.length);

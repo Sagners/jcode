@@ -69,6 +69,26 @@ const RuntimeSurface = {
           </div>
         </section>
       </div>
+      <div class="runtime-inspector-grid">
+        <section class="runtime-inspector-panel">
+          <div class="runtime-panel-head">
+            <h4>Collaboration</h4>
+            <span id="runtimeCollabHint_${surface.id}">No collaborators</span>
+          </div>
+          <div class="runtime-collab-board" id="runtimeCollab_${surface.id}">
+            ${this.renderCollaboration({})}
+          </div>
+        </section>
+        <section class="runtime-inspector-panel">
+          <div class="runtime-panel-head">
+            <h4>Workspace Performance</h4>
+            <span id="runtimePerfHint_${surface.id}">Waiting for samples</span>
+          </div>
+          <div class="runtime-performance-grid" id="runtimePerformance_${surface.id}">
+            ${this.renderPerformance({})}
+          </div>
+        </section>
+      </div>
       <div class="runtime-filter-bar" id="runtimeFilters_${surface.id}">
         ${this.renderFilterButton('all', 'All')}
         ${this.renderFilterButton('running', 'Running')}
@@ -102,6 +122,10 @@ const RuntimeSurface = {
     const toolHintEl = container.querySelector(`#runtimeToolHint_${surface.id}`);
     const contextEl = container.querySelector(`#runtimeContext_${surface.id}`);
     const contextHintEl = container.querySelector(`#runtimeContextHint_${surface.id}`);
+    const collabEl = container.querySelector(`#runtimeCollab_${surface.id}`);
+    const collabHintEl = container.querySelector(`#runtimeCollabHint_${surface.id}`);
+    const perfEl = container.querySelector(`#runtimePerformance_${surface.id}`);
+    const perfHintEl = container.querySelector(`#runtimePerfHint_${surface.id}`);
     const filtersEl = container.querySelector(`#runtimeFilters_${surface.id}`);
     const eventsEl = container.querySelector(`#runtimeEvents_${surface.id}`);
 
@@ -126,6 +150,16 @@ const RuntimeSurface = {
       if (contextEl) contextEl.innerHTML = this.renderContextMetrics(metrics);
       if (contextHintEl) {
         contextHintEl.textContent = metrics.compaction ? 'Compaction recorded' : `${metrics.memoryCount || 0} memories`;
+      }
+      if (collabEl) collabEl.innerHTML = this.renderCollaboration(metrics);
+      if (collabHintEl) {
+        const counts = this.collaborationCounts(metrics.swarmMembers || []);
+        collabHintEl.textContent = counts.total ? `${counts.active} active / ${counts.total} total` : 'No collaborators';
+      }
+      if (perfEl) perfEl.innerHTML = this.renderPerformance(metrics);
+      if (perfHintEl) {
+        const eventTotal = Object.values(metrics.eventCounts || {}).reduce((sum, count) => sum + count, 0);
+        perfHintEl.textContent = eventTotal ? `${eventTotal} gateway events` : 'Waiting for samples';
       }
 
       if (!eventsEl) return;
@@ -210,6 +244,102 @@ const RuntimeSurface = {
         <small>${this.escapeHtml(detail)}</small>
       </div>
     `).join('');
+  },
+
+  renderCollaboration(metrics) {
+    const members = Array.isArray(metrics.swarmMembers) ? metrics.swarmMembers : [];
+    const planItems = Array.isArray(metrics.planItems) ? metrics.planItems : [];
+    const counts = this.collaborationCounts(members);
+    const planPreview = planItems.slice(0, 4);
+
+    return `
+      <div class="runtime-collab-stats">
+        ${this.renderStatPill('Members', counts.total)}
+        ${this.renderStatPill('Active', counts.active)}
+        ${this.renderStatPill('Blocked', counts.blocked)}
+        ${this.renderStatPill('Plan', planItems.length)}
+      </div>
+      <div class="runtime-member-list">
+        ${members.length ? members.slice(0, 5).map(member => this.renderMember(member)).join('') : this.renderEmpty('No collaboration status yet.')}
+      </div>
+      <div class="runtime-plan-list">
+        ${planPreview.length ? planPreview.map(item => this.renderPlanItem(item)).join('') : ''}
+      </div>
+    `;
+  },
+
+  renderPerformance(metrics) {
+    const eventTotal = Object.values(metrics.eventCounts || {}).reduce((sum, count) => sum + count, 0);
+    const activeTools = metrics.activeTools?.length || 0;
+    const recentTools = metrics.recentTools?.length || 0;
+    const lastAge = metrics.lastEventAt ? this.formatAge(Date.now() - metrics.lastEventAt) : 'none';
+    const cacheTokens = (metrics.cacheReadTokens || 0) + (metrics.cacheCreationTokens || 0);
+
+    return [
+      ['Events', eventTotal, 'gateway total'],
+      ['Tools', `${activeTools}/${recentTools}`, 'active/recent'],
+      ['Messages', metrics.messageCount || 0, 'loaded session'],
+      ['Errors', metrics.errorCount || 0, metrics.lastError || 'clear'],
+      ['Cache', cacheTokens, 'tokens'],
+      ['Last event', lastAge, metrics.phase || 'idle']
+    ].map(([label, value, detail]) => `
+      <div class="runtime-performance-item">
+        <span>${this.escapeHtml(label)}</span>
+        <strong>${this.escapeHtml(value)}</strong>
+        <small>${this.escapeHtml(detail)}</small>
+      </div>
+    `).join('');
+  },
+
+  renderStatPill(label, value) {
+    return `
+      <div class="runtime-collab-pill">
+        <span>${this.escapeHtml(label)}</span>
+        <strong>${this.escapeHtml(value)}</strong>
+      </div>
+    `;
+  },
+
+  renderMember(member) {
+    const name = member.name || member.id || member.role || 'agent';
+    const status = member.status || member.state || (member.active ? 'active' : 'idle');
+    const detail = member.model || member.role || member.task || '';
+    return `
+      <div class="runtime-member runtime-member-${this.classToken(status)}">
+        <span class="runtime-tool-dot"></span>
+        <strong>${this.escapeHtml(name)}</strong>
+        <small>${this.escapeHtml([status, detail].filter(Boolean).join(' - '))}</small>
+      </div>
+    `;
+  },
+
+  renderPlanItem(item) {
+    const title = item.title || item.task || item.step || item.name || 'Plan item';
+    const status = item.status || item.state || 'pending';
+    return `
+      <div class="runtime-plan-item runtime-plan-${this.classToken(status)}">
+        <span>${this.escapeHtml(status)}</span>
+        <strong>${this.escapeHtml(title)}</strong>
+      </div>
+    `;
+  },
+
+  collaborationCounts(members) {
+    return members.reduce((counts, member) => {
+      const status = String(member.status || member.state || (member.active ? 'active' : 'idle')).toLowerCase();
+      counts.total += 1;
+      if (['active', 'running', 'working', 'busy'].includes(status)) counts.active += 1;
+      if (['blocked', 'error', 'failed'].includes(status)) counts.blocked += 1;
+      return counts;
+    }, { total: 0, active: 0, blocked: 0 });
+  },
+
+  formatAge(ms) {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    return `${Math.round(minutes / 60)}h ago`;
   },
 
   renderEmpty(text) {

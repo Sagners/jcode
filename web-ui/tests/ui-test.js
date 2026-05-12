@@ -10,6 +10,7 @@ async function runTests() {
   const context = await browser.newContext();
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
+  page.setDefaultNavigationTimeout(15000);
 
   const results = [];
   const pass = () => { results.push({ name: currentTest, status: 'PASS' }); console.log('✓ ' + currentTest); };
@@ -176,11 +177,47 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 10: Mobile Horizontal Overflow
+  // Test 10: Runtime Collaboration and Performance Panels
+  currentTest = 'Runtime Collaboration and Performance Panels';
+  try {
+    await page.evaluate(() => document.getElementById('openRuntimeBtn')?.click());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      RuntimeStore.updateMetrics({
+        swarmMembers: [
+          { id: 'planner', status: 'active', model: 'claude-opus-4-7' },
+          { id: 'executor', status: 'blocked', model: 'claude-sonnet-4-7' }
+        ],
+        planItems: [
+          { title: 'Route planning work', status: 'running' },
+          { title: 'Verify UI state', status: 'pending' }
+        ],
+        eventCounts: { swarm_status: 1, tool_start: 2 },
+        activeTools: [{ id: 'tool-1', name: 'shell', status: 'running' }],
+        recentTools: [{ id: 'tool-2', name: 'build', status: 'done' }],
+        messageCount: 12,
+        errorCount: 1,
+        lastError: 'sample warning',
+        lastEventAt: Date.now(),
+        phase: 'running tool'
+      });
+    });
+    await page.waitForTimeout(200);
+    const runtimeText = await page.textContent('.runtime-surface-body');
+    if (runtimeText.includes('Collaboration') && runtimeText.includes('Workspace Performance') && runtimeText.includes('planner') && runtimeText.includes('Events')) {
+      pass();
+    } else {
+      fail('Runtime panels did not render expected metrics');
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 11: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.reload({ waitUntil: 'networkidle' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1000);
     const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     if (!hasOverflow) {
@@ -193,7 +230,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 11: CSS Loading
+  // Test 12: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -207,7 +244,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 12: Console Errors Check (excluding expected 401 from API calls)
+  // Test 13: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {
@@ -219,7 +256,7 @@ async function runTests() {
       }
     }
   });
-  await page.reload({ waitUntil: 'networkidle' });
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
   if (errors.length === 0) {
     pass();

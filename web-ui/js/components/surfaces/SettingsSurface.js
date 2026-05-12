@@ -187,43 +187,79 @@ const SettingsSurface = {
   },
 
   renderModelTab() {
+    const routing = window.ModelRoutingStore?.snapshot?.() || {};
+    const modelOptions = this.modelOptions();
+    const renderModelOptions = value => modelOptions.map(option => `
+      <option value="${this.escapeHtml(option.value)}"${option.value === value ? ' selected' : ''}>${this.escapeHtml(option.label)}</option>
+    `).join('');
+
     return `
       <div class="settings-section">
-        <h3 class="settings-section-title">Model Configuration</h3>
+        <h3 class="settings-section-title">Model Routing</h3>
+        <p class="settings-help">
+          Local routing plan for multi-agent work. The gateway can consume these route hints when model-aware dispatch is enabled.
+        </p>
 
-        <div class="settings-field">
-          <label class="settings-label">Default Model</label>
-          <select class="settings-input" id="settingDefaultModel">
-            <option value="claude-opus-4-7">Claude Opus 4</option>
-            <option value="claude-sonnet-4-7">Claude Sonnet 4</option>
-            <option value="claude-opus-4">Claude Opus 4 (Legacy)</option>
-            <option value="claude-sonnet-4">Claude Sonnet 4 (Legacy)</option>
-          </select>
-        </div>
-
-        <div class="settings-field">
-          <label class="settings-label">Temperature</label>
-          <div style="display: flex; align-items: center; gap: var(--space-3);">
-            <input type="range" class="settings-input settings-range"
-              id="settingTemperature" min="0" max="100" value="70">
-            <span class="settings-range-value" id="temperatureValue">0.7</span>
-          </div>
-        </div>
-
-        <div class="settings-field">
-          <label class="settings-label">Max Tokens</label>
-          <input type="number" class="settings-input" id="settingMaxTokens"
-            value="8192" min="256" max="200000" step="256">
-        </div>
-
-        <div class="settings-field">
-          <label class="settings-label">
-            <input type="checkbox" id="settingStreamResponse" checked>
-            Enable streaming responses
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <label class="model-routing-mode ${routing.routingMode === 'single' ? 'active' : ''}">
+            <input type="radio" name="routingMode" value="single" ${routing.routingMode === 'single' ? 'checked' : ''}>
+            <span>Single</span>
+            <small>Use default model everywhere</small>
           </label>
+          <label class="model-routing-mode ${routing.routingMode === 'role' ? 'active' : ''}">
+            <input type="radio" name="routingMode" value="role" ${routing.routingMode === 'role' ? 'checked' : ''}>
+            <span>Role routing</span>
+            <small>Plan, execute, and review separately</small>
+          </label>
+          <label class="model-routing-mode ${routing.routingMode === 'fallback' ? 'active' : ''}">
+            <input type="radio" name="routingMode" value="fallback" ${routing.routingMode === 'fallback' ? 'checked' : ''}>
+            <span>Fallback first</span>
+            <small>Prefer default with a named fallback</small>
+          </label>
+        </div>
+
+        <div class="model-routing-grid">
+          ${this.renderModelField('Default', 'defaultModel', routing.defaultModel, renderModelOptions)}
+          ${this.renderModelField('Planning', 'planningModel', routing.planningModel, renderModelOptions)}
+          ${this.renderModelField('Execution', 'executionModel', routing.executionModel, renderModelOptions)}
+          ${this.renderModelField('Review', 'reviewModel', routing.reviewModel, renderModelOptions)}
+          ${this.renderModelField('Fallback', 'fallbackModel', routing.fallbackModel, renderModelOptions)}
+        </div>
+
+        <div class="model-routing-preview">
+          <span>Route hints</span>
+          <code id="modelRoutePreview">${this.escapeHtml(JSON.stringify(window.ModelRoutingStore?.routeHints?.() || {}, null, 2))}</code>
+        </div>
+
+        <div class="settings-actions">
+          <button class="settings-btn primary" id="saveModelRoutingBtn">Save Routing</button>
+          <button class="settings-btn" id="resetModelRoutingBtn">Reset</button>
         </div>
       </div>
     `;
+  },
+
+  renderModelField(label, key, value, renderModelOptions) {
+    return `
+      <div class="settings-field model-routing-field">
+        <label class="settings-label" for="setting_${this.escapeHtml(key)}">${this.escapeHtml(label)} Model</label>
+        <select class="settings-input" id="setting_${this.escapeHtml(key)}" data-model-route="${this.escapeHtml(key)}">
+          ${renderModelOptions(value)}
+        </select>
+      </div>
+    `;
+  },
+
+  modelOptions() {
+    return [
+      { value: 'claude-opus-4-7', label: 'Claude Opus 4' },
+      { value: 'claude-sonnet-4-7', label: 'Claude Sonnet 4' },
+      { value: 'claude-opus-4', label: 'Claude Opus 4 (Legacy)' },
+      { value: 'claude-sonnet-4', label: 'Claude Sonnet 4 (Legacy)' },
+      { value: 'gpt-5.5', label: 'GPT-5.5' },
+      { value: 'gpt-5.4', label: 'GPT-5.4' },
+      { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
+    ];
   },
 
   renderShortcutsTab() {
@@ -376,13 +412,52 @@ const SettingsSurface = {
 
     // Model tab listeners
     if (tabName === 'model') {
-      const tempSlider = content.querySelector('#settingTemperature');
-      const tempValue = content.querySelector('#temperatureValue');
-      if (tempSlider) {
-        tempSlider.addEventListener('input', (e) => {
-          tempValue.textContent = (e.target.value / 100).toFixed(2);
+      const preview = content.querySelector('#modelRoutePreview');
+      const collectRouting = () => {
+        const values = {};
+        content.querySelectorAll('[data-model-route]').forEach(input => {
+          values[input.dataset.modelRoute] = input.value;
         });
-      }
+        values.routingMode = content.querySelector('input[name="routingMode"]:checked')?.value || 'role';
+        return values;
+      };
+      const refreshPreview = () => {
+        const routing = collectRouting();
+        const routeHints = {
+          mode: routing.routingMode,
+          roles: {
+            default: routing.defaultModel,
+            planning: routing.planningModel,
+            execution: routing.executionModel,
+            review: routing.reviewModel,
+            fallback: routing.fallbackModel
+          }
+        };
+        if (preview) preview.textContent = JSON.stringify(routeHints, null, 2);
+        content.querySelectorAll('.model-routing-mode').forEach(label => {
+          const input = label.querySelector('input[name="routingMode"]');
+          label.classList.toggle('active', input?.checked);
+        });
+      };
+
+      content.querySelectorAll('[data-model-route], input[name="routingMode"]').forEach(input => {
+        input.addEventListener('change', refreshPreview);
+      });
+
+      content.querySelector('#saveModelRoutingBtn')?.addEventListener('click', () => {
+        window.ModelRoutingStore?.save?.(collectRouting());
+        this.showToast('Model routing saved.');
+      });
+
+      content.querySelector('#resetModelRoutingBtn')?.addEventListener('click', () => {
+        const next = window.ModelRoutingStore?.reset?.();
+        if (next) {
+          this.switchTab('model', content.closest('.settings-body'));
+        }
+        this.showToast('Model routing reset.');
+      });
+
+      refreshPreview();
     }
 
     // Subscribe to connection store for real-time status updates

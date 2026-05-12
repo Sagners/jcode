@@ -877,6 +877,82 @@
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   margin-top: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.model-routing-mode {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.model-routing-mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.model-routing-mode span {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.model-routing-mode small {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.model-routing-mode:hover,
+.model-routing-mode.active {
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.model-routing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+.model-routing-field {
+  margin-bottom: 0;
+}
+
+.model-routing-preview {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.model-routing-preview span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.model-routing-preview code {
+  display: block;
+  min-height: 112px;
+  padding: var(--space-3);
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .desktop-runtime-grid {
@@ -1280,6 +1356,108 @@
   overflow-wrap: anywhere;
 }
 
+.runtime-collab-board {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.runtime-collab-stats,
+.runtime-performance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.runtime-collab-pill,
+.runtime-performance-item {
+  min-width: 0;
+  padding: var(--space-3);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.runtime-collab-pill span,
+.runtime-performance-item span,
+.runtime-performance-item small {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.runtime-collab-pill strong,
+.runtime-performance-item strong {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.runtime-performance-item small {
+  margin-top: var(--space-1);
+}
+
+.runtime-member-list,
+.runtime-plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.runtime-member,
+.runtime-plan-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.runtime-plan-item {
+  grid-template-columns: minmax(76px, 0.35fr) minmax(0, 1.65fr);
+}
+
+.runtime-member strong,
+.runtime-member small,
+.runtime-plan-item strong,
+.runtime-plan-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-member strong,
+.runtime-plan-item strong {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.runtime-member small,
+.runtime-plan-item span {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.runtime-member-running .runtime-tool-dot,
+.runtime-member-active .runtime-tool-dot,
+.runtime-member-working .runtime-tool-dot {
+  background: var(--success);
+}
+
+.runtime-member-blocked .runtime-tool-dot,
+.runtime-member-error .runtime-tool-dot,
+.runtime-member-failed .runtime-tool-dot {
+  background: var(--error);
+}
+
 .runtime-filter-bar {
   display: flex;
   align-items: center;
@@ -1620,7 +1798,10 @@
   }
 
   .runtime-health-strip,
-  .runtime-context-grid {
+  .runtime-context-grid,
+  .runtime-collab-stats,
+  .runtime-performance-grid,
+  .model-routing-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

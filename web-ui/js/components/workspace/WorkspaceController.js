@@ -587,18 +587,36 @@ const WorkspaceController = {
     this.renderActiveLane();
   },
 
+  ensureActiveLaneWithPrimaryColumn(name = 'Workspace') {
+    let lane = LaneStore.activeLane;
+    if (!lane) {
+      lane = LaneStore.createLane({ name });
+      LaneStore.setActiveLane(lane);
+    }
+
+    if (!lane.columns?.[0]) {
+      const columns = [
+        {
+          id: `col-${Date.now()}`,
+          surfaces: [],
+          width: 100,
+          isActive: true
+        }
+      ];
+      LaneStore.updateLane(lane.id, { columns });
+      lane = LaneStore.activeLane || LaneStore.getLane(lane.id);
+    }
+
+    return lane;
+  },
+
   openSettingsSurface(initialTab = 'general') {
     if (typeof SettingsSurface !== 'undefined') {
       SettingsSurface.activeTab = initialTab;
     }
 
-    const lane = LaneStore.activeLane;
-    if (!lane?.columns[0]) {
-      // Create lane if none exists
-      const newLane = LaneStore.createLane({ name: 'Settings' });
-      LaneStore.setActiveLane(newLane);
-      return this.openSettingsSurface(initialTab);
-    }
+    const lane = this.ensureActiveLaneWithPrimaryColumn('Settings');
+    if (!lane?.columns[0]) return;
 
     // Check if settings already open
     const existing = lane.columns[0].surfaces.find(s => s.kind === 'settings');
@@ -616,12 +634,8 @@ const WorkspaceController = {
   },
 
   openRuntimeSurface() {
-    const lane = LaneStore.activeLane;
-    if (!lane?.columns[0]) {
-      const newLane = LaneStore.createLane({ name: 'Runtime' });
-      LaneStore.setActiveLane(newLane);
-      return this.openRuntimeSurface();
-    }
+    const lane = this.ensureActiveLaneWithPrimaryColumn('Runtime');
+    if (!lane?.columns[0]) return;
 
     const existing = lane.columns[0].surfaces.find(s => s.kind === 'runtime');
     if (existing) {
