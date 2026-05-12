@@ -11,6 +11,20 @@ const ModelRoutingStore = {
     fallbackModel: 'claude-sonnet-4'
   },
   allowedRoutingModes: ['single', 'role', 'fallback'],
+  options: [
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4', shortLabel: 'Opus 4' },
+    { value: 'claude-sonnet-4-7', label: 'Claude Sonnet 4', shortLabel: 'Sonnet 4' },
+    { value: 'claude-opus-4', label: 'Claude Opus 4 (Legacy)', shortLabel: 'Opus Legacy' },
+    { value: 'claude-sonnet-4', label: 'Claude Sonnet 4 (Legacy)', shortLabel: 'Sonnet Legacy' },
+    { value: 'gpt-5.5', label: 'GPT-5.5', shortLabel: 'GPT-5.5' },
+    { value: 'gpt-5.4', label: 'GPT-5.4', shortLabel: 'GPT-5.4' },
+    { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark', shortLabel: 'Spark' }
+  ],
+  modeLabels: {
+    single: 'Single',
+    role: 'Role routing',
+    fallback: 'Fallback first'
+  },
   listeners: [],
 
   snapshot() {
@@ -68,6 +82,20 @@ const ModelRoutingStore = {
         fallback: state.fallbackModel
       }
     };
+  },
+
+  modelOptions() {
+    return this.options.map(option => ({ ...option }));
+  },
+
+  modelLabel(value, compact = false) {
+    const match = this.options.find(option => option.value === value);
+    if (!match) return value || 'Unknown';
+    return compact ? match.shortLabel : match.label;
+  },
+
+  modeLabel(value) {
+    return this.modeLabels[value] || this.modeLabels.role;
   },
 
   subscribe(callback) {

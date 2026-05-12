@@ -126,20 +126,23 @@ async function runTests() {
     });
     await page.waitForTimeout(100);
     const runtimeRendered = await page.$('.runtime-surface-body');
+    const routingRendered = await page.$('.runtime-routing-strip');
     const toolRendered = await page.$('.runtime-tool');
     const contextRendered = await page.$('.runtime-context-grid');
     const filterRendered = await page.$('.runtime-filter[data-runtime-filter="success"]');
     const listenerCountBefore = await page.evaluate(() => RuntimeStore.listeners.length);
+    const routingListenerCountBefore = await page.evaluate(() => ModelRoutingStore.listeners.length);
     await page.evaluate(() => WorkspaceController.renderActiveLane());
     await page.waitForTimeout(200);
     const listenerCountAfter = await page.evaluate(() => RuntimeStore.listeners.length);
+    const routingListenerCountAfter = await page.evaluate(() => ModelRoutingStore.listeners.length);
 
     console.log('  Surfaces before:', beforeCount, 'after:', afterCount);
 
-    if (afterCount > beforeCount && runtimeRendered && toolRendered && contextRendered && filterRendered && listenerCountAfter <= listenerCountBefore) {
+    if (afterCount > beforeCount && runtimeRendered && routingRendered && toolRendered && contextRendered && filterRendered && listenerCountAfter <= listenerCountBefore && routingListenerCountAfter <= routingListenerCountBefore) {
       pass('Open Runtime', `Surfaces: ${beforeCount} -> ${afterCount}`);
     } else {
-      fail('Open Runtime', `Runtime surface did not render operational sections or leaked listeners: ${listenerCountBefore} -> ${listenerCountAfter}`);
+      fail('Open Runtime', `Runtime surface did not render operational sections or leaked listeners: ${listenerCountBefore}/${routingListenerCountBefore} -> ${listenerCountAfter}/${routingListenerCountAfter}`);
     }
   } catch (e) {
     fail('Open Runtime', e.message);

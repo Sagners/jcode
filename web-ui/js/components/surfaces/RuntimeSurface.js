@@ -3,6 +3,7 @@
 const RuntimeSurface = {
   activeFilter: 'all',
   unsubscribe: null,
+  routingUnsubscribe: null,
 
   render(surface) {
     this.teardown();
@@ -48,6 +49,9 @@ const RuntimeSurface = {
           <span class="runtime-summary-label">MCP</span>
           <strong id="runtimeMcp_${surface.id}">0 servers</strong>
         </div>
+      </div>
+      <div class="runtime-routing-strip" id="runtimeRouting_${surface.id}">
+        ${this.renderRoutingPlan()}
       </div>
       <div class="runtime-inspector-grid">
         <section class="runtime-inspector-panel">
@@ -118,6 +122,7 @@ const RuntimeSurface = {
     const errorsEl = container.querySelector(`#runtimeErrors_${surface.id}`);
     const messagesEl = container.querySelector(`#runtimeMessages_${surface.id}`);
     const mcpEl = container.querySelector(`#runtimeMcp_${surface.id}`);
+    const routingEl = container.querySelector(`#runtimeRouting_${surface.id}`);
     const toolsEl = container.querySelector(`#runtimeTools_${surface.id}`);
     const toolHintEl = container.querySelector(`#runtimeToolHint_${surface.id}`);
     const contextEl = container.querySelector(`#runtimeContext_${surface.id}`);
@@ -191,6 +196,12 @@ const RuntimeSurface = {
         });
       });
     });
+
+    if (routingEl && window.ModelRoutingStore?.subscribe) {
+      this.routingUnsubscribe = ModelRoutingStore.subscribe(state => {
+        routingEl.innerHTML = this.renderRoutingPlan(state);
+      });
+    }
   },
 
   renderEvent(event) {
@@ -244,6 +255,34 @@ const RuntimeSurface = {
         <small>${this.escapeHtml(detail)}</small>
       </div>
     `).join('');
+  },
+
+  renderRoutingPlan(state = null) {
+    const routing = state || window.ModelRoutingStore?.snapshot?.() || {};
+    const mode = routing.routingMode || 'role';
+    const roles = [
+      ['Default', routing.defaultModel],
+      ['Planning', routing.planningModel],
+      ['Execution', routing.executionModel],
+      ['Review', routing.reviewModel],
+      ['Fallback', routing.fallbackModel]
+    ];
+
+    return `
+      <div class="runtime-route-summary">
+        <span>Model Routing</span>
+        <strong>${this.escapeHtml(window.ModelRoutingStore?.modeLabel?.(mode) || mode)}</strong>
+        <small>${this.escapeHtml(window.ModelRoutingStore?.modelLabel?.(routing.defaultModel) || routing.defaultModel || 'No default model')}</small>
+      </div>
+      <div class="runtime-route-roles">
+        ${roles.map(([label, value]) => `
+          <div class="runtime-route-role">
+            <span>${this.escapeHtml(label)}</span>
+            <strong>${this.escapeHtml(window.ModelRoutingStore?.modelLabel?.(value, true) || value || 'unset')}</strong>
+          </div>
+        `).join('')}
+      </div>
+    `;
   },
 
   renderCollaboration(metrics) {
@@ -392,7 +431,11 @@ const RuntimeSurface = {
     if (typeof this.unsubscribe === 'function') {
       this.unsubscribe();
     }
+    if (typeof this.routingUnsubscribe === 'function') {
+      this.routingUnsubscribe();
+    }
     this.unsubscribe = null;
+    this.routingUnsubscribe = null;
   },
 
   escapeHtml(value) {

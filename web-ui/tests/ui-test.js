@@ -55,7 +55,9 @@ async function runTests() {
   try {
     const brand = await page.textContent('.header-brand');
     const modelSelect = await page.$('#modelSelect');
-    if (brand === 'jcode' && modelSelect) {
+    const routingBadge = await page.$('#modelRoutingModeBadge');
+    const routingUiLoaded = await page.evaluate(() => typeof ModelRoutingUI !== 'undefined');
+    if (brand === 'jcode' && modelSelect && routingBadge && routingUiLoaded) {
       pass();
     } else {
       fail('Missing header elements');
@@ -64,7 +66,27 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 4: Lane Navigator
+  // Test 4: Header Model Routing Sync
+  currentTest = 'Header Model Routing Sync';
+  try {
+    await page.selectOption('#modelSelect', 'gpt-5.5');
+    await page.waitForTimeout(100);
+    const stored = await page.evaluate(() => ModelRoutingStore.snapshot());
+    const badge = await page.textContent('#modelRoutingModeBadge');
+    await page.evaluate(() => ModelRoutingStore.save({ defaultModel: 'local-custom-model' }));
+    await page.waitForTimeout(100);
+    const customValue = await page.inputValue('#modelSelect');
+    await page.evaluate(() => ModelRoutingStore.save({ defaultModel: 'gpt-5.5' }));
+    if (stored.defaultModel === 'gpt-5.5' && badge.includes('Role') && customValue === 'local-custom-model') {
+      pass();
+    } else {
+      fail('Header model selection did not update routing store');
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 5: Lane Navigator
   currentTest = 'Lane Navigator';
   try {
     const laneNav = await page.$('.lane-navigator');
@@ -80,7 +102,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 5: Create New Lane (mock window.prompt)
+  // Test 6: Create New Lane (mock window.prompt)
   currentTest = 'Create New Lane';
   try {
     // Mock window.prompt to return a value
@@ -108,7 +130,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 6: New Session Button
+  // Test 7: New Session Button
   currentTest = 'New Session Button';
   try {
     const newSessionBtn = await page.$('#newSessionBtn');
@@ -123,7 +145,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 7: Settings Button
+  // Test 8: Settings Button
   currentTest = 'Settings Button';
   try {
     const settingsBtn = await page.$('#openSettingsBtn');
@@ -136,7 +158,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 8: Runtime Button
+  // Test 9: Runtime Button
   currentTest = 'Runtime Button';
   try {
     const runtimeBtn = await page.$('#openRuntimeBtn');
@@ -150,7 +172,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 9: Runtime Protocol Normalization
+  // Test 10: Runtime Protocol Normalization
   currentTest = 'Runtime Protocol Normalization';
   try {
     const normalized = await page.evaluate(() => {
@@ -177,7 +199,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 10: Runtime Collaboration and Performance Panels
+  // Test 11: Runtime Collaboration and Performance Panels
   currentTest = 'Runtime Collaboration and Performance Panels';
   try {
     await page.evaluate(() => document.getElementById('openRuntimeBtn')?.click());
@@ -204,7 +226,7 @@ async function runTests() {
     });
     await page.waitForTimeout(200);
     const runtimeText = await page.textContent('.runtime-surface-body');
-    if (runtimeText.includes('Collaboration') && runtimeText.includes('Workspace Performance') && runtimeText.includes('planner') && runtimeText.includes('Events')) {
+    if (runtimeText.includes('Model Routing') && runtimeText.includes('GPT-5.5') && runtimeText.includes('Collaboration') && runtimeText.includes('Workspace Performance') && runtimeText.includes('planner') && runtimeText.includes('Events')) {
       pass();
     } else {
       fail('Runtime panels did not render expected metrics');
@@ -213,7 +235,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 11: Mobile Horizontal Overflow
+  // Test 12: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -230,7 +252,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 12: CSS Loading
+  // Test 13: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -244,7 +266,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 13: Console Errors Check (excluding expected 401 from API calls)
+  // Test 14: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {

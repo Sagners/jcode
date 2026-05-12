@@ -1246,6 +1246,52 @@
   overflow-wrap: anywhere;
 }
 
+.runtime-routing-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.075), rgba(255, 255, 255, 0.025));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.runtime-route-summary,
+.runtime-route-role {
+  min-width: 0;
+  padding: var(--space-3);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.runtime-route-summary span,
+.runtime-route-summary small,
+.runtime-route-role span {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.runtime-route-summary strong,
+.runtime-route-role strong {
+  display: block;
+  margin: var(--space-1) 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-route-roles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
 .runtime-inspector-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1685,6 +1731,16 @@
     flex: 0 0 auto;
   }
 
+  .model-routing-control {
+    gap: var(--space-1);
+  }
+
+  .model-routing-badge {
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .workspace-body {
     flex-direction: column;
   }
@@ -1801,7 +1857,9 @@
   .runtime-context-grid,
   .runtime-collab-stats,
   .runtime-performance-grid,
-  .model-routing-grid {
+  .model-routing-grid,
+  .runtime-routing-strip,
+  .runtime-route-roles {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

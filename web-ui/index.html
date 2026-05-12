@@ -322,10 +322,13 @@
           <span class="moon">🌙</span>
           <span class="sun">☀️</span>
         </button>
-        <select id="modelSelect" class="model-select">
-          <option value="claude-opus-4-7">Opus 4</option>
-          <option value="claude-sonnet-4-7">Sonnet 4</option>
-        </select>
+        <div class="model-routing-control">
+          <button type="button" class="model-routing-badge" id="modelRoutingModeBadge" title="Open model routing settings">Role routing</button>
+          <select id="modelSelect" class="model-select" title="Default model">
+            <option value="claude-opus-4-7">Opus 4</option>
+            <option value="claude-sonnet-4-7">Sonnet 4</option>
+          </select>
+        </div>
       </div>
     </header>
 
@@ -373,6 +376,7 @@
   <script src="js/stores/workspace.js"></script>
   <script src="js/stores/runtime.js"></script>
   <script src="js/stores/model-routing.js"></script>
+  <script src="js/model-routing-ui.js"></script>
   <script src="js/protocol.js"></script>
   <script src="js/api.js"></script>
   <script src="js/desktop.js"></script>

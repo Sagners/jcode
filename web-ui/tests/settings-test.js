@@ -104,8 +104,9 @@ async function runTests() {
     if (modelSelect) {
       const value = await modelSelect.inputValue();
       const planning = await page.$('#setting_planningModel');
+      const copyBtn = await page.$('#copyModelRoutingBtn');
       const preview = await page.textContent('#modelRoutePreview');
-      if (planning && preview.includes('"planning"')) {
+      if (planning && copyBtn && preview.includes('"planning"')) {
         pass('Model Tab', `Default model: ${value}`);
       } else {
         fail('Model Tab', 'Routing fields incomplete');

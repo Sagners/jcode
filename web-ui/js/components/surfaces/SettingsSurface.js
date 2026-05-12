@@ -233,6 +233,7 @@ const SettingsSurface = {
 
         <div class="settings-actions">
           <button class="settings-btn primary" id="saveModelRoutingBtn">Save Routing</button>
+          <button class="settings-btn" id="copyModelRoutingBtn">Copy Hints</button>
           <button class="settings-btn" id="resetModelRoutingBtn">Reset</button>
         </div>
       </div>
@@ -251,14 +252,9 @@ const SettingsSurface = {
   },
 
   modelOptions() {
-    return [
+    return window.ModelRoutingStore?.modelOptions?.() || [
       { value: 'claude-opus-4-7', label: 'Claude Opus 4' },
-      { value: 'claude-sonnet-4-7', label: 'Claude Sonnet 4' },
-      { value: 'claude-opus-4', label: 'Claude Opus 4 (Legacy)' },
-      { value: 'claude-sonnet-4', label: 'Claude Sonnet 4 (Legacy)' },
-      { value: 'gpt-5.5', label: 'GPT-5.5' },
-      { value: 'gpt-5.4', label: 'GPT-5.4' },
-      { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
+      { value: 'claude-sonnet-4-7', label: 'Claude Sonnet 4' }
     ];
   },
 
@@ -449,6 +445,15 @@ const SettingsSurface = {
         this.showToast('Model routing saved.');
       });
 
+      content.querySelector('#copyModelRoutingBtn')?.addEventListener('click', async () => {
+        try {
+          await this.copyText(preview?.textContent || JSON.stringify(window.ModelRoutingStore?.routeHints?.() || {}, null, 2));
+          this.showToast('Route hints copied.');
+        } catch (e) {
+          this.showToast('Could not copy route hints.', true);
+        }
+      });
+
       content.querySelector('#resetModelRoutingBtn')?.addEventListener('click', () => {
         const next = window.ModelRoutingStore?.reset?.();
         if (next) {
@@ -499,6 +504,24 @@ const SettingsSurface = {
     const div = document.createElement('div');
     div.textContent = value == null ? '' : String(value);
     return div.innerHTML;
+  },
+
+  async copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    textarea.remove();
+    if (!ok) throw new Error('copy failed');
   },
 
   showToast(message, isError = false) {
