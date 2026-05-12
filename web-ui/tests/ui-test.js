@@ -86,7 +86,31 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 5: Lane Navigator
+  // Test 5: Composer Route Awareness
+  currentTest = 'Composer Route Awareness';
+  try {
+    const routePlan = await page.$('.composer-route-plan');
+    const routeText = await page.textContent('.composer-route-plan');
+    await page.evaluate(() => ModelRoutingStore.save({
+      routingMode: 'fallback',
+      defaultModel: 'gpt-5.5',
+      executionModel: 'gpt-5.3-codex-spark'
+    }));
+    await page.waitForTimeout(100);
+    const updatedText = await page.textContent('.composer-route-plan');
+    await page.click('.composer-route-summary');
+    await page.waitForTimeout(200);
+    const settingsText = await page.textContent('.settings-body');
+    if (routePlan && routeText.includes('Route') && updatedText.includes('Fallback first') && updatedText.includes('Spark') && settingsText.includes('Model Routing')) {
+      pass();
+    } else {
+      fail('Composer route plan did not render or sync model routing');
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 6: Lane Navigator
   currentTest = 'Lane Navigator';
   try {
     const laneNav = await page.$('.lane-navigator');
@@ -102,7 +126,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 6: Create New Lane (mock window.prompt)
+  // Test 7: Create New Lane (mock window.prompt)
   currentTest = 'Create New Lane';
   try {
     // Mock window.prompt to return a value
@@ -130,7 +154,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 7: New Session Button
+  // Test 8: New Session Button
   currentTest = 'New Session Button';
   try {
     const newSessionBtn = await page.$('#newSessionBtn');
@@ -145,7 +169,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 8: Settings Button
+  // Test 9: Settings Button
   currentTest = 'Settings Button';
   try {
     const settingsBtn = await page.$('#openSettingsBtn');
@@ -158,7 +182,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 9: Runtime Button
+  // Test 10: Runtime Button
   currentTest = 'Runtime Button';
   try {
     const runtimeBtn = await page.$('#openRuntimeBtn');
@@ -172,7 +196,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 10: Runtime Protocol Normalization
+  // Test 11: Runtime Protocol Normalization
   currentTest = 'Runtime Protocol Normalization';
   try {
     const normalized = await page.evaluate(() => {
@@ -199,7 +223,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 11: Runtime Collaboration and Performance Panels
+  // Test 12: Runtime Collaboration and Performance Panels
   currentTest = 'Runtime Collaboration and Performance Panels';
   try {
     await page.evaluate(() => document.getElementById('openRuntimeBtn')?.click());
@@ -235,7 +259,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 12: Mobile Horizontal Overflow
+  // Test 13: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -252,7 +276,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 13: CSS Loading
+  // Test 14: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -266,7 +290,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 14: Console Errors Check (excluding expected 401 from API calls)
+  // Test 15: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {

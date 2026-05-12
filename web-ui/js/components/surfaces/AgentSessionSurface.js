@@ -36,25 +36,31 @@ const AgentSessionSurface = {
         <button class="inline-action" id="openConnectionSettings_${surface.id}">Connection settings</button>
       </div>
       <div class="composer">
-        <button class="composer-attachment" title="Attach file">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-          </svg>
-        </button>
-        <textarea class="composer-input" placeholder="Connect to jcode Gateway to start messaging"
-          rows="1" id="msgInput_${surface.id}"></textarea>
-        <button class="composer-send" id="sendBtn_${surface.id}" title="Send message">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-        </button>
+        <div class="composer-route-plan" id="composerRoutePlan_${surface.id}">
+          ${this.renderRoutePlan()}
+        </div>
+        <div class="composer-input-row">
+          <button class="composer-attachment" title="Attach file">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+            </svg>
+          </button>
+          <textarea class="composer-input" placeholder="Connect to jcode Gateway to start messaging"
+            rows="1" id="msgInput_${surface.id}"></textarea>
+          <button class="composer-send" id="sendBtn_${surface.id}" title="Send message">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
       </div>
     `;
 
     this.setupEventListeners(container, surface);
     this.subscribeToMessages(surface.id);
     this.bindConnectionState(container, surface);
+    this.bindRoutePlan(container, surface);
     container.__surfaceCleanup = () => this.teardown(surface.id);
 
     return container;
@@ -113,6 +119,22 @@ const AgentSessionSurface = {
         WorkspaceController.openSettingsSurface('connection');
       }
     });
+  },
+
+  bindRoutePlan(container, surface) {
+    const routePlan = container.querySelector(`#composerRoutePlan_${surface.id}`);
+    if (!routePlan || !window.ModelRoutingStore?.subscribe) return;
+
+    const render = state => {
+      routePlan.innerHTML = this.renderRoutePlan(state);
+    };
+    const unsubscribe = ModelRoutingStore.subscribe(render);
+    routePlan.addEventListener('click', event => {
+      const target = event.target.closest?.('[data-action="model-routing"]');
+      if (!target) return;
+      window.WorkspaceController?.openSettingsSurface?.('model');
+    });
+    this.addCleanup(surface.id, unsubscribe);
   },
 
   bindConnectionState(container, surface) {
@@ -250,6 +272,34 @@ const AgentSessionSurface = {
         timestamp: Date.now()
       }, sessionId);
     }
+  },
+
+  renderRoutePlan(state = null) {
+    const routing = state || window.ModelRoutingStore?.snapshot?.() || {};
+    const modelLabel = (value, compact = false) => window.ModelRoutingStore?.modelLabel?.(value, compact) || value || 'unset';
+    const modeLabel = window.ModelRoutingStore?.modeLabel?.(routing.routingMode) || routing.routingMode || 'Role routing';
+    const chips = [
+      ['Default', routing.defaultModel],
+      ['Plan', routing.planningModel],
+      ['Exec', routing.executionModel],
+      ['Review', routing.reviewModel],
+      ['Fallback', routing.fallbackModel]
+    ];
+
+    return `
+      <button type="button" class="composer-route-summary" data-action="model-routing" title="Open model routing settings">
+        <span>Route</span>
+        <strong>${this.escapeHtml(modeLabel)}</strong>
+      </button>
+      <div class="composer-route-chips" aria-label="Current model route">
+        ${chips.map(([label, value]) => `
+          <span class="composer-route-chip">
+            <span>${this.escapeHtml(label)}</span>
+            <strong>${this.escapeHtml(modelLabel(value, true))}</strong>
+          </span>
+        `).join('')}
+      </div>
+    `;
   },
 
   escapeHtml(text) {

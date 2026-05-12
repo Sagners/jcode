@@ -153,11 +153,12 @@ async function runTests() {
   try {
     await page.evaluate(() => document.querySelector('.session-empty-action[data-action="starter"]')?.click());
     const composerValue = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-input')?.value || '');
+    const routeText = await page.textContent('.surface-container[data-surface-kind="agent-session"] .composer-route-plan');
     const actionCount = await page.$$eval('.session-empty-action', els => els.length);
-    if (composerValue.includes('Summarize') && actionCount >= 3) {
+    if (composerValue.includes('Summarize') && routeText.includes('Route') && routeText.includes('Exec') && actionCount >= 3) {
       pass('Session Empty Actions', `Actions: ${actionCount}`);
     } else {
-      fail('Session Empty Actions', `Composer value: ${composerValue || 'empty'}, actions: ${actionCount}`);
+      fail('Session Empty Actions', `Composer value: ${composerValue || 'empty'}, route: ${routeText || 'empty'}, actions: ${actionCount}`);
     }
   } catch (e) {
     fail('Session Empty Actions', e.message);
