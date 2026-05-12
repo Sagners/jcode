@@ -303,7 +303,7 @@
   </div>
 
   <!-- Main Workspace -->
-  <div class="workspace-layout min-h-screen">
+  <div class="workspace-layout">
     <!-- Header -->
     <header class="header">
       <div class="header-brand">jcode</div>
@@ -351,6 +351,92 @@
       <main class="lane-content" id="laneContent">
         <!-- Active lane content rendered here -->
       </main>
+
+      <!-- Runtime Inspector -->
+      <aside class="workspace-runtime-inspector" id="runtimeInspector" aria-label="Runtime inspector">
+        <div class="runtime-inspector-head">
+          <div class="runtime-inspector-title">
+            <span class="status-dot disconnected" id="runtimeInspectorDot"></span>
+            <span>Runtime</span>
+          </div>
+          <button type="button" class="runtime-inspector-action" id="runtimeInspectorOpenRuntime" title="Open full runtime view">
+            Open
+          </button>
+        </div>
+
+        <section class="runtime-inspector-current">
+          <span>Phase</span>
+          <strong id="runtimeInspectorPhase">idle</strong>
+          <small id="runtimeInspectorLastEvent">Waiting for gateway events</small>
+        </section>
+
+        <div class="runtime-inspector-metrics">
+          <div>
+            <span>Tools</span>
+            <strong id="runtimeInspectorActiveTools">0</strong>
+          </div>
+          <div>
+            <span>Errors</span>
+            <strong id="runtimeInspectorErrors">0</strong>
+          </div>
+          <div>
+            <span>Messages</span>
+            <strong id="runtimeInspectorMessages">0</strong>
+          </div>
+        </div>
+
+        <section class="runtime-inspector-section">
+          <div class="runtime-inspector-section-head">
+            <span>Model Route</span>
+            <button type="button" class="runtime-inspector-link" id="runtimeInspectorRouteSettings">Settings</button>
+          </div>
+          <div class="runtime-inspector-route runtime-inspector-route-stack">
+            <div>
+              <span>Mode</span>
+              <strong id="runtimeInspectorRouteMode">Role routing</strong>
+            </div>
+            <div>
+              <span>Default</span>
+              <strong id="runtimeInspectorDefaultModel">Sonnet 4</strong>
+            </div>
+            <div>
+              <span>Execution</span>
+              <strong id="runtimeInspectorExecutionModel">Sonnet 4</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="runtime-inspector-section">
+          <div class="runtime-inspector-section-head">
+            <span>Collaboration</span>
+            <small id="runtimeInspectorCollabHint">0 active</small>
+          </div>
+          <div class="runtime-inspector-route runtime-inspector-count-grid">
+            <div>
+              <span>Members</span>
+              <strong id="runtimeInspectorMembers">0</strong>
+            </div>
+            <div>
+              <span>Blocked</span>
+              <strong id="runtimeInspectorBlocked">0</strong>
+            </div>
+            <div>
+              <span>Plan</span>
+              <strong id="runtimeInspectorPlanItems">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="runtime-inspector-section runtime-inspector-tools">
+          <div class="runtime-inspector-section-head">
+            <span>Activity</span>
+            <small id="runtimeInspectorToolHint">No active tools</small>
+          </div>
+          <div class="runtime-inspector-tool-list" id="runtimeInspectorToolList">
+            <span class="runtime-inspector-empty">No tools have run yet.</span>
+          </div>
+        </section>
+      </aside>
     </div>
   </div>
 
@@ -396,6 +482,7 @@
   <script src="js/components/surfaces/AgentSessionSurface.js"></script>
   <script src="js/components/surfaces/WorkspaceFilesSurface.js"></script>
   <script src="js/components/surfaces/RuntimeSurface.js"></script>
+  <script src="js/runtime-inspector.js"></script>
   <script src="js/components/workspace/WorkspaceController.js"></script>
   <script src="js/main.js"></script>
 

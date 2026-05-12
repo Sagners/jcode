@@ -260,6 +260,53 @@ async function runTests() {
   }
 
   // Test 13: Mobile Horizontal Overflow
+  currentTest = 'Workspace Runtime Inspector';
+  try {
+    await page.evaluate(() => {
+      RuntimeStore.updateMetrics({
+        phase: 'running tool',
+        activeTools: [{ id: 'tool-inspector-1', name: 'shell', status: 'running' }],
+        recentTools: [{ id: 'tool-inspector-2', name: 'build', status: 'done' }],
+        swarmMembers: [
+          { id: 'planner', status: 'active', model: 'gpt-5.5' },
+          { id: 'reviewer', status: 'blocked', model: 'claude-opus-4-7' }
+        ],
+        planItems: [
+          { title: 'Inspect runtime state', status: 'running' },
+          { title: 'Verify route hints', status: 'pending' }
+        ],
+        messageCount: 12,
+        errorCount: 1,
+        lastError: 'sample warning',
+        lastEventAt: Date.now()
+      });
+      RuntimeStore.addEvent({
+        type: 'tool_start',
+        title: 'Inspector tool started',
+        status: 'running',
+        detail: 'shell'
+      });
+      ModelRoutingStore.save({
+        routingMode: 'fallback',
+        defaultModel: 'gpt-5.5',
+        executionModel: 'gpt-5.3-codex-spark'
+      });
+    });
+    await page.waitForTimeout(200);
+    const inspectorText = await page.textContent('#runtimeInspector');
+    await page.click('#runtimeInspectorOpenRuntime');
+    await page.waitForTimeout(200);
+    const runtimeSurface = await page.$('.runtime-surface-body');
+    if (inspectorText.includes('running tool') && inspectorText.includes('Fallback first') && inspectorText.includes('Spark') && inspectorText.includes('shell') && runtimeSurface) {
+      pass();
+    } else {
+      fail('Runtime inspector did not sync runtime metrics, route hints, or full runtime action');
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 14: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -276,7 +323,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 14: CSS Loading
+  // Test 15: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -290,7 +337,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 15: Console Errors Check (excluding expected 401 from API calls)
+  // Test 16: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {
