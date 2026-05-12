@@ -10,6 +10,19 @@
 - **Bump version for releases** - Update version in `Cargo.toml` when making releases. When cutting a new release, look at all the changes that happened since the last release and determine what the version bump should be ie patch or minor, etc. 
 - **Remote builds available** - Use `scripts/remote_build.sh` to offload heavy cargo work to another machine. If your build is terminated, likely is because there are not enough resources on this machine to build. use remote build in that case. Try checking the resource avaliablity on the machine before you run a build. 
 
+## Web UI / Tauri UX Direction
+
+- Treat the web UI as a multi-model orchestration workbench, not a generic dashboard. The primary loop is: compose a task, understand which model route will handle it, watch execution/collaboration state, and inspect failures without leaving the task.
+- Keep the header compact. Preserve only high-frequency actions in the top bar; collapse secondary controls behind clear icon buttons or short chips, especially on narrow viewports.
+- Make the composer route-aware. When changing the chat/task input surface, show the active routing mode, default model, fallback state, and role route hints close to the send action so users know how the next task will run.
+- Prefer a right-side runtime inspector over forcing users into a separate runtime-only workflow. Runtime visibility should summarize active tools, collaboration members, route roles, errors, and recent events while the main conversation/work surface stays usable.
+- Represent collaboration as workflow state, not only metrics. Planning, execution, review, and fallback roles should show the responsible model, current status, and the latest meaningful action.
+- Keep visual hierarchy quiet and operational: the main task surface gets the strongest weight; Runtime, Settings, and supporting metadata stay lower contrast unless they are active, blocked, or failing.
+- Use Tailwind for new UI styling through the existing local pipeline. Add reusable component classes in `web-ui/css/tailwind.css` or existing scoped CSS as appropriate, run `npm run build`, and let `web-ui/scripts/sync-dist.mjs` update generated Tauri assets.
+- Do not hand-edit `web-ui/dist`; edit source files and regenerate. Avoid CDN-only styling or assets that would make packaged Tauri builds fragile.
+- Current model-routing UI is local route-hint state until the gateway/runtime exposes an authoritative backend model-routing contract. Do not imply backend orchestration exists until that protocol is implemented and verified.
+- Verify visual work on desktop and mobile viewports, including overflow, focus/hover states, and whether the main workflow is understandable without explanatory in-app text.
+
 ## Logs
 - Logs are written to `~/.jcode/logs/` (daily files like `jcode-YYYY-MM-DD.log`).
 
