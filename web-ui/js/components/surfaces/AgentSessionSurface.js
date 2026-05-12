@@ -4,6 +4,82 @@ const AgentSessionSurface = {
   // Store active surface IDs for message routing
   activeSurfaces: new Set(),
   cleanups: new Map(),
+  starterPrompts: [
+    {
+      key: 'plan',
+      route: 'Planning',
+      title: 'Plan task',
+      summary: 'Clarify goal, likely files, and verification before editing.',
+      prompt: `Plan this change before editing.
+
+Goal:
+- 
+
+Constraints:
+- Follow the existing codebase patterns.
+- Keep the first implementation slice small and reversible.
+
+Return:
+- Recommended route
+- Files to inspect
+- Implementation steps
+- Verification plan`
+    },
+    {
+      key: 'execute',
+      route: 'Execution',
+      title: 'Execute change',
+      summary: 'Move from a scoped request into focused code and checks.',
+      prompt: `Implement the following change using the existing project patterns.
+
+Change:
+- 
+
+Constraints:
+- Keep the diff focused and reversible.
+- Preserve unrelated local changes.
+- Verify with targeted tests or a build.
+
+Return:
+- Summary of edits
+- Verification evidence
+- Remaining risks`
+    },
+    {
+      key: 'review',
+      route: 'Review',
+      title: 'Review result',
+      summary: 'Inspect regressions, UX gaps, and missing validation.',
+      prompt: `Review the current implementation for regressions and product risks.
+
+Focus:
+- Behavior gaps
+- State sync issues
+- Desktop and mobile layout overflow
+- Missing verification
+
+Return findings first with file references, then summarize any test gaps.`
+    },
+    {
+      key: 'diagnose',
+      route: 'Fallback',
+      title: 'Diagnose failure',
+      summary: 'Turn an error or blocked run into evidence and a fix path.',
+      prompt: `Diagnose this failure and propose the safest fix.
+
+Observed failure:
+- 
+
+Context:
+- 
+
+Return:
+- Root cause hypothesis
+- Evidence to gather
+- Fix path
+- Verification steps`
+    }
+  ],
 
   render(surface) {
     this.teardown(surface.id);
@@ -17,18 +93,7 @@ const AgentSessionSurface = {
     const messagesId = `messages_${surface.id}`;
     container.innerHTML = `
       <div class="session-messages" id="${messagesId}">
-        <div class="empty-state session-empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-          <p>Start a conversation</p>
-          <p class="session-empty-hint">Connect to the gateway, then send a message to begin.</p>
-          <div class="session-empty-actions">
-            <button class="session-empty-action" data-action="connection">Connection</button>
-            <button class="session-empty-action" data-action="runtime">Runtime</button>
-            <button class="session-empty-action" data-action="starter">Starter prompt</button>
-          </div>
-        </div>
+        ${this.renderEmptyState()}
       </div>
       <div class="session-connection-banner" id="connectionBanner_${surface.id}" hidden>
         <span class="status-dot disconnected"></span>
@@ -72,8 +137,7 @@ const AgentSessionSurface = {
 
     if (sendBtn && input) {
       input.addEventListener('input', () => {
-        input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+        this.resizeComposerInput(input);
       });
 
       sendBtn.addEventListener('click', () => {
@@ -105,12 +169,10 @@ const AgentSessionSurface = {
       }
     });
 
-    container.querySelector('[data-action="starter"]')?.addEventListener('click', () => {
-      if (!input) return;
-      input.value = 'Summarize the current workspace state and recommend the next action.';
-      input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 150) + 'px';
-      input.focus();
+    container.querySelectorAll('[data-action="starter-template"]').forEach(button => {
+      button.addEventListener('click', () => {
+        this.applyStarterPrompt(input, button.dataset.template);
+      });
     });
 
     const settingsBtn = container.querySelector(`#openConnectionSettings_${surface.id}`);
@@ -135,6 +197,55 @@ const AgentSessionSurface = {
       window.WorkspaceController?.openSettingsSurface?.('model');
     });
     this.addCleanup(surface.id, unsubscribe);
+  },
+
+  renderEmptyState() {
+    return `
+      <div class="empty-state session-empty-state">
+        <div class="session-empty-workbench">
+          <div class="session-empty-heading">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M12 3l7 4v6c0 4.4-2.9 7.2-7 8-4.1-.8-7-3.6-7-8V7l7-4z"></path>
+              <path d="M9 12l2 2 4-5"></path>
+            </svg>
+            <div>
+              <p>Start with an intent</p>
+              <p class="session-empty-hint">Route-aware task starters for the next message.</p>
+            </div>
+          </div>
+          <div class="session-starter-grid" aria-label="Starter task intents">
+            ${this.starterPrompts.map(prompt => `
+              <button type="button" class="session-starter-card" data-action="starter-template" data-template="${this.escapeHtml(prompt.key)}">
+                <span class="session-starter-route">${this.escapeHtml(prompt.route)}</span>
+                <strong>${this.escapeHtml(prompt.title)}</strong>
+                <small>${this.escapeHtml(prompt.summary)}</small>
+              </button>
+            `).join('')}
+          </div>
+          <div class="session-empty-actions" aria-label="Session setup actions">
+            <button type="button" class="session-empty-action" data-action="connection">Connection</button>
+            <button type="button" class="session-empty-action" data-action="runtime">Runtime</button>
+          </div>
+        </div>
+      </div>
+    `;
+  },
+
+  applyStarterPrompt(input, templateKey) {
+    if (!input) return;
+    const template = this.starterPrompts.find(item => item.key === templateKey) || this.starterPrompts[0];
+    input.value = template.prompt;
+    this.resizeComposerInput(input);
+    input.focus();
+    if (typeof input.setSelectionRange === 'function') {
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  },
+
+  resizeComposerInput(input) {
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
   },
 
   bindConnectionState(container, surface) {

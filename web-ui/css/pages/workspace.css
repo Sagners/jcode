@@ -523,16 +523,19 @@
 }
 
 .session-empty-state {
-  min-height: 280px;
-  max-width: 620px;
+  min-height: 320px;
+  width: 100%;
+  max-width: 860px;
   margin: 0 auto;
   gap: var(--space-3);
   color: var(--text-secondary);
+  align-items: stretch;
 }
 
 .session-empty-state svg {
   color: var(--accent);
   opacity: 0.55;
+  flex-shrink: 0;
 }
 
 .session-empty-state > p:first-of-type {
@@ -1871,6 +1874,11 @@
   .session-messages {
     min-height: 260px;
     padding: var(--space-4) var(--space-3);
+  }
+
+  .session-empty-state {
+    min-height: 300px;
+    padding: var(--space-5) var(--space-2);
   }
 
   .session-connection-banner,

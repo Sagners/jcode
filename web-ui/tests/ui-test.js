@@ -111,6 +111,23 @@ async function runTests() {
   }
 
   // Test 6: Lane Navigator
+  currentTest = 'Starter Intent Templates';
+  try {
+    const starterCount = await page.$$eval('.session-starter-card', cards => cards.length);
+    await page.click('.session-starter-card[data-template="plan"]');
+    await page.waitForTimeout(100);
+    const composerValue = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-input')?.value || '');
+    const starterLabels = await page.$$eval('.session-starter-card strong', labels => labels.map(label => label.textContent.trim()).join('|'));
+    if (starterCount >= 4 && composerValue.includes('Plan this change before editing') && starterLabels.includes('Execute change') && starterLabels.includes('Diagnose failure')) {
+      pass();
+    } else {
+      fail('Starter templates did not render or fill the composer');
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 7: Lane Navigator
   currentTest = 'Lane Navigator';
   try {
     const laneNav = await page.$('.lane-navigator');
@@ -126,7 +143,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 7: Create New Lane (mock window.prompt)
+  // Test 8: Create New Lane (mock window.prompt)
   currentTest = 'Create New Lane';
   try {
     // Mock window.prompt to return a value
@@ -154,7 +171,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 8: New Session Button
+  // Test 9: New Session Button
   currentTest = 'New Session Button';
   try {
     const newSessionBtn = await page.$('#newSessionBtn');
@@ -169,7 +186,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 9: Settings Button
+  // Test 10: Settings Button
   currentTest = 'Settings Button';
   try {
     const settingsBtn = await page.$('#openSettingsBtn');
@@ -182,7 +199,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 10: Runtime Button
+  // Test 11: Runtime Button
   currentTest = 'Runtime Button';
   try {
     const runtimeBtn = await page.$('#openRuntimeBtn');
@@ -196,7 +213,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 11: Runtime Protocol Normalization
+  // Test 12: Runtime Protocol Normalization
   currentTest = 'Runtime Protocol Normalization';
   try {
     const normalized = await page.evaluate(() => {
@@ -223,7 +240,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 12: Runtime Collaboration and Performance Panels
+  // Test 13: Runtime Collaboration and Performance Panels
   currentTest = 'Runtime Collaboration and Performance Panels';
   try {
     await page.evaluate(() => document.getElementById('openRuntimeBtn')?.click());
@@ -259,7 +276,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 13: Mobile Horizontal Overflow
+  // Test 14: Mobile Horizontal Overflow
   currentTest = 'Workspace Runtime Inspector';
   try {
     await page.evaluate(() => {
@@ -306,7 +323,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 14: Mobile Horizontal Overflow
+  // Test 15: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -326,7 +343,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 15: CSS Loading
+  // Test 16: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -340,7 +357,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 16: Console Errors Check (excluding expected 401 from API calls)
+  // Test 17: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {

@@ -151,14 +151,20 @@ async function runTests() {
   // Test 5: Session Empty Actions
   console.log('\n--- Test: Session Empty Actions ---');
   try {
-    await page.evaluate(() => document.querySelector('.session-empty-action[data-action="starter"]')?.click());
-    const composerValue = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-input')?.value || '');
+    const starterResult = await page.evaluate(() => {
+      const surface = document.querySelector('.surface-container[data-surface-kind="agent-session"]');
+      surface?.querySelector('.session-starter-card[data-template="review"]')?.click();
+      return {
+        composerValue: surface?.querySelector('.composer-input')?.value || '',
+        starterCount: surface?.querySelectorAll('.session-starter-card').length || 0,
+        setupActionCount: surface?.querySelectorAll('.session-empty-action').length || 0
+      };
+    });
     const routeText = await page.textContent('.surface-container[data-surface-kind="agent-session"] .composer-route-plan');
-    const actionCount = await page.$$eval('.session-empty-action', els => els.length);
-    if (composerValue.includes('Summarize') && routeText.includes('Route') && routeText.includes('Exec') && actionCount >= 3) {
-      pass('Session Empty Actions', `Actions: ${actionCount}`);
+    if (starterResult.composerValue.includes('Review the current implementation') && routeText.includes('Route') && routeText.includes('Exec') && starterResult.starterCount >= 4 && starterResult.setupActionCount >= 2) {
+      pass('Session Empty Actions', `Starters: ${starterResult.starterCount}, setup actions: ${starterResult.setupActionCount}`);
     } else {
-      fail('Session Empty Actions', `Composer value: ${composerValue || 'empty'}, route: ${routeText || 'empty'}, actions: ${actionCount}`);
+      fail('Session Empty Actions', `Composer value: ${starterResult.composerValue || 'empty'}, route: ${routeText || 'empty'}, starters: ${starterResult.starterCount}, setup actions: ${starterResult.setupActionCount}`);
     }
   } catch (e) {
     fail('Session Empty Actions', e.message);
