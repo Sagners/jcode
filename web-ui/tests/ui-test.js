@@ -297,7 +297,7 @@ async function runTests() {
     await page.click('#runtimeInspectorOpenRuntime');
     await page.waitForTimeout(200);
     const runtimeSurface = await page.$('.runtime-surface-body');
-    if (inspectorText.includes('running tool') && inspectorText.includes('Fallback first') && inspectorText.includes('Spark') && inspectorText.includes('shell') && runtimeSurface) {
+    if (inspectorText.includes('running tool') && inspectorText.includes('Fallback first') && inspectorText.includes('Spark') && inspectorText.includes('shell') && inspectorText.includes('Workflow') && inspectorText.includes('Planning') && inspectorText.includes('Execution') && inspectorText.includes('Fallback') && runtimeSurface) {
       pass();
     } else {
       fail('Runtime inspector did not sync runtime metrics, route hints, or full runtime action');
@@ -312,11 +312,14 @@ async function runTests() {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1000);
-    const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
-    if (!hasOverflow) {
+    const overflow = await page.evaluate(() => ({
+      horizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      vertical: document.documentElement.scrollHeight > document.documentElement.clientHeight
+    }));
+    if (!overflow.horizontal && !overflow.vertical) {
       pass();
     } else {
-      fail('Mobile layout overflows horizontally');
+      fail('Mobile layout overflows: ' + JSON.stringify(overflow));
     }
     await page.setViewportSize({ width: 1280, height: 720 });
   } catch (e) {

@@ -5,6 +5,8 @@ const RuntimeInspector = {
   root: null,
   runtimeUnsubscribe: null,
   routingUnsubscribe: null,
+  runtimeSnapshot: { events: [], metrics: {} },
+  routingState: {},
 
   init() {
     if (this.initialized) return;
@@ -34,6 +36,7 @@ const RuntimeInspector = {
   },
 
   renderRuntime({ events = [], metrics = {} }) {
+    this.runtimeSnapshot = { events, metrics };
     const activeTools = Array.isArray(metrics.activeTools) ? metrics.activeTools : [];
     const recentTools = Array.isArray(metrics.recentTools) ? metrics.recentTools : [];
     const members = Array.isArray(metrics.swarmMembers) ? metrics.swarmMembers : [];
@@ -61,15 +64,81 @@ const RuntimeInspector = {
     }
 
     this.renderTools([...activeTools, ...recentTools].slice(0, 5));
+    this.renderRoleFlow();
   },
 
   renderRouting(state = {}) {
+    this.routingState = state;
     const modelLabel = (value, compact = false) => window.ModelRoutingStore?.modelLabel?.(value, compact) || value || 'unset';
     const modeLabel = window.ModelRoutingStore?.modeLabel?.(state.routingMode) || state.routingMode || 'Role routing';
 
     this.setText('runtimeInspectorRouteMode', modeLabel);
     this.setText('runtimeInspectorDefaultModel', modelLabel(state.defaultModel, true));
     this.setText('runtimeInspectorExecutionModel', modelLabel(state.executionModel, true));
+    this.renderRoleFlow();
+  },
+
+  renderRoleFlow() {
+    const container = document.getElementById('runtimeInspectorRoleFlow');
+    if (!container) return;
+
+    const { metrics = {} } = this.runtimeSnapshot || {};
+    const routing = this.routingState || window.ModelRoutingStore?.snapshot?.() || {};
+    const roles = [
+      { key: 'planning', label: 'Planning', model: routing.planningModel },
+      { key: 'execution', label: 'Execution', model: routing.executionModel },
+      { key: 'review', label: 'Review', model: routing.reviewModel },
+      { key: 'fallback', label: 'Fallback', model: routing.fallbackModel }
+    ].map(role => ({
+      ...role,
+      status: this.roleStatus(role.key, metrics, routing)
+    }));
+
+    container.innerHTML = roles.map(role => this.renderRole(role)).join('');
+
+    const active = roles.filter(role => role.status === 'active').length;
+    const ready = roles.filter(role => role.status === 'ready').length;
+    this.setText('runtimeInspectorFlowHint', active ? `${active} active` : `${ready} ready`);
+  },
+
+  renderRole(role) {
+    const modelLabel = window.ModelRoutingStore?.modelLabel?.(role.model, true) || role.model || 'unset';
+    const statusLabel = {
+      active: 'Active',
+      ready: 'Ready',
+      blocked: 'Blocked',
+      standby: 'Standby'
+    }[role.status] || 'Standby';
+
+    return `
+      <div class="runtime-inspector-role runtime-inspector-role-${this.classToken(role.status)}">
+        <span>${this.escapeHtml(statusLabel)}</span>
+        <strong>${this.escapeHtml(role.label)}</strong>
+        <small>${this.escapeHtml(modelLabel)}</small>
+      </div>
+    `;
+  },
+
+  roleStatus(key, metrics, routing) {
+    const phase = String(metrics.phase || '').toLowerCase();
+    const hasActiveTools = Array.isArray(metrics.activeTools) && metrics.activeTools.length > 0;
+    const hasError = Boolean(metrics.errorCount || metrics.lastError);
+    const planItems = Array.isArray(metrics.planItems) ? metrics.planItems : [];
+    const activePlan = planItems.some(item => ['active', 'running', 'working'].includes(String(item.status || item.state || '').toLowerCase()));
+
+    if (key === 'fallback') {
+      if (hasError && routing.routingMode === 'fallback') return 'active';
+      return routing.routingMode === 'fallback' ? 'ready' : 'standby';
+    }
+
+    if (hasError && key === 'review') return 'blocked';
+    if (key === 'planning' && (activePlan || phase.includes('plan'))) return 'active';
+    if (key === 'execution' && (hasActiveTools || phase.includes('tool') || phase.includes('run') || phase.includes('exec'))) return 'active';
+    if (key === 'review' && (phase.includes('review') || phase.includes('verify') || phase.includes('test'))) return 'active';
+    if (key === 'planning' && planItems.length) return 'ready';
+    if (key === 'execution') return 'ready';
+    if (key === 'review') return 'ready';
+    return 'standby';
   },
 
   renderTools(tools) {
