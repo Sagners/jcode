@@ -4,9 +4,11 @@ const AgentSessionSurface = {
   // Store active surface IDs for message routing
   activeSurfaces: new Set(),
   cleanups: new Map(),
+  activeIntents: new Map(),
   starterPrompts: [
     {
       key: 'plan',
+      routeKey: 'planningModel',
       route: 'Planning',
       title: 'Plan task',
       summary: 'Clarify goal, likely files, and verification before editing.',
@@ -27,6 +29,7 @@ Return:
     },
     {
       key: 'execute',
+      routeKey: 'executionModel',
       route: 'Execution',
       title: 'Execute change',
       summary: 'Move from a scoped request into focused code and checks.',
@@ -47,6 +50,7 @@ Return:
     },
     {
       key: 'review',
+      routeKey: 'reviewModel',
       route: 'Review',
       title: 'Review result',
       summary: 'Inspect regressions, UX gaps, and missing validation.',
@@ -62,6 +66,7 @@ Return findings first with file references, then summarize any test gaps.`
     },
     {
       key: 'diagnose',
+      routeKey: 'fallbackModel',
       route: 'Fallback',
       title: 'Diagnose failure',
       summary: 'Turn an error or blocked run into evidence and a fix path.',
@@ -104,6 +109,9 @@ Return:
         <div class="composer-route-plan" id="composerRoutePlan_${surface.id}">
           ${this.renderRoutePlan()}
         </div>
+        <div class="composer-task-strip" id="composerTaskStrip_${surface.id}">
+          ${this.renderTaskIntent(surface.id)}
+        </div>
         <div class="composer-input-row">
           <button class="composer-attachment" title="Attach file">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -138,14 +146,19 @@ Return:
     if (sendBtn && input) {
       input.addEventListener('input', () => {
         this.resizeComposerInput(input);
+        if (!input.value.trim()) {
+          this.setActiveIntent(surface.id, null, container);
+        }
       });
 
       sendBtn.addEventListener('click', () => {
         const content = input.value.trim();
         if (content) {
-          this.sendMessage(surface.id, content);
+          const intent = this.activeIntents.get(surface.id) || this.defaultIntent();
+          this.sendMessage(surface.id, content, intent);
           input.value = '';
           input.style.height = 'auto';
+          this.setActiveIntent(surface.id, null, container);
         }
       });
 
@@ -171,7 +184,7 @@ Return:
 
     container.querySelectorAll('[data-action="starter-template"]').forEach(button => {
       button.addEventListener('click', () => {
-        this.applyStarterPrompt(input, button.dataset.template);
+        this.applyStarterPrompt(input, button.dataset.template, surface.id, container);
       });
     });
 
@@ -185,10 +198,14 @@ Return:
 
   bindRoutePlan(container, surface) {
     const routePlan = container.querySelector(`#composerRoutePlan_${surface.id}`);
+    const taskStrip = container.querySelector(`#composerTaskStrip_${surface.id}`);
     if (!routePlan || !window.ModelRoutingStore?.subscribe) return;
 
     const render = state => {
       routePlan.innerHTML = this.renderRoutePlan(state);
+      if (taskStrip) {
+        taskStrip.innerHTML = this.renderTaskIntent(surface.id, state);
+      }
     };
     const unsubscribe = ModelRoutingStore.subscribe(render);
     routePlan.addEventListener('click', event => {
@@ -197,6 +214,16 @@ Return:
       window.WorkspaceController?.openSettingsSurface?.('model');
     });
     this.addCleanup(surface.id, unsubscribe);
+  },
+
+  defaultIntent() {
+    return {
+      key: 'custom',
+      routeKey: 'defaultModel',
+      route: 'Default',
+      title: 'Custom task',
+      summary: 'Free-form request using the current route hints.'
+    };
   },
 
   renderEmptyState() {
@@ -231,15 +258,59 @@ Return:
     `;
   },
 
-  applyStarterPrompt(input, templateKey) {
+  applyStarterPrompt(input, templateKey, surfaceId, container) {
     if (!input) return;
     const template = this.starterPrompts.find(item => item.key === templateKey) || this.starterPrompts[0];
     input.value = template.prompt;
     this.resizeComposerInput(input);
+    this.setActiveIntent(surfaceId, template, container);
     input.focus();
     if (typeof input.setSelectionRange === 'function') {
       input.setSelectionRange(input.value.length, input.value.length);
     }
+  },
+
+  setActiveIntent(surfaceId, intent, container = null) {
+    if (intent) {
+      this.activeIntents.set(surfaceId, intent);
+    } else {
+      this.activeIntents.delete(surfaceId);
+    }
+
+    const taskStrip = container?.querySelector?.(`#composerTaskStrip_${surfaceId}`)
+      || document.getElementById(`composerTaskStrip_${surfaceId}`);
+    if (taskStrip) {
+      taskStrip.innerHTML = this.renderTaskIntent(surfaceId);
+    }
+  },
+
+  getIntentRoute(intent, routing = null) {
+    const state = routing || window.ModelRoutingStore?.snapshot?.() || {};
+    const modelLabel = (value, compact = false) => window.ModelRoutingStore?.modelLabel?.(value, compact) || value || 'unset';
+    const route = intent || this.defaultIntent();
+    const model = state[route.routeKey] || state.defaultModel;
+    return {
+      route: route.route || 'Default',
+      title: route.title || 'Custom task',
+      model: modelLabel(model, true),
+      mode: window.ModelRoutingStore?.modeLabel?.(state.routingMode) || state.routingMode || 'Role routing'
+    };
+  },
+
+  renderTaskIntent(surfaceId, routing = null) {
+    const intent = this.activeIntents.get(surfaceId) || this.defaultIntent();
+    const route = this.getIntentRoute(intent, routing);
+    const isFallback = intent.routeKey === 'fallbackModel';
+
+    return `
+      <div class="composer-task-intent${intent.key !== 'custom' ? ' active' : ''}">
+        <span class="composer-task-label">Intent</span>
+        <strong>${this.escapeHtml(route.title)}</strong>
+        <span class="composer-task-route">${this.escapeHtml(route.route)}</span>
+        <span class="composer-task-model">${this.escapeHtml(route.model)}</span>
+        ${isFallback ? '<span class="composer-task-state">Recovery</span>' : ''}
+      </div>
+    `;
   },
 
   resizeComposerInput(input) {
@@ -281,12 +352,14 @@ Return:
     this.addCleanup(surface.id, unsubscribe);
   },
 
-  sendMessage(sessionId, content) {
+  sendMessage(sessionId, content, intent = null) {
+    const taskIntent = this.getIntentRoute(intent);
     // Add user message to display immediately
     this.addMessageToDisplay({
       role: 'user',
       content: content,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      taskIntent
     }, sessionId);
 
     // Send via WebSocket
@@ -332,6 +405,7 @@ Return:
         <span class="message-role">${roleLabel}</span>
         <span class="message-time">${timeStr}</span>
       </div>
+      ${this.renderMessageTaskIntent(message.taskIntent)}
       <div class="message-content">${this.escapeHtml(message.content)}</div>
     `;
 
@@ -339,6 +413,19 @@ Return:
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
     console.log('Message added to display:', roleLabel, message.content.substring(0, 50));
+  },
+
+  renderMessageTaskIntent(intent) {
+    if (!intent) return '';
+    const state = intent.route === 'Fallback' ? '<span>Recovery</span>' : '';
+    return `
+      <div class="message-task-intent">
+        <span>${this.escapeHtml(intent.route || 'Default')}</span>
+        <strong>${this.escapeHtml(intent.title || 'Custom task')}</strong>
+        <small>${this.escapeHtml(intent.model || 'unset')}</small>
+        ${state}
+      </div>
+    `;
   },
 
   subscribeToMessages(sessionId) {
@@ -365,6 +452,7 @@ Return:
     cleanups.forEach(cleanup => cleanup());
     this.cleanups.delete(surfaceId);
     this.activeSurfaces.delete(surfaceId);
+    this.activeIntents.delete(surfaceId);
   },
 
   handleIncomingMessage(data, sessionId) {

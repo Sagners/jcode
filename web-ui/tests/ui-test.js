@@ -117,8 +117,9 @@ async function runTests() {
     await page.click('.session-starter-card[data-template="plan"]');
     await page.waitForTimeout(100);
     const composerValue = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-input')?.value || '');
+    const taskStripText = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-task-strip')?.textContent || '');
     const starterLabels = await page.$$eval('.session-starter-card strong', labels => labels.map(label => label.textContent.trim()).join('|'));
-    if (starterCount >= 4 && composerValue.includes('Plan this change before editing') && starterLabels.includes('Execute change') && starterLabels.includes('Diagnose failure')) {
+    if (starterCount >= 4 && composerValue.includes('Plan this change before editing') && taskStripText.includes('Plan task') && taskStripText.includes('Planning') && starterLabels.includes('Execute change') && starterLabels.includes('Diagnose failure')) {
       pass();
     } else {
       fail('Starter templates did not render or fill the composer');
@@ -128,6 +129,30 @@ async function runTests() {
   }
 
   // Test 7: Lane Navigator
+  currentTest = 'Task Intent Message Metadata';
+  try {
+    const result = await page.evaluate(() => {
+      const surface = document.querySelector('.surface-container[data-surface-kind="agent-session"]');
+      ConnectionStore.setConnected(true);
+      window.WS.getState = () => 'closed';
+      surface?.querySelector('.session-starter-card[data-template="diagnose"]')?.click();
+      surface?.querySelector('.composer-send')?.click();
+      return {
+        taskStripText: surface?.querySelector('.composer-task-strip')?.textContent || '',
+        messageIntentText: surface?.querySelector('.message-user .message-task-intent')?.textContent || '',
+        systemMessageText: surface?.querySelector('.message-system .message-content')?.textContent || ''
+      };
+    });
+    if (result.taskStripText.includes('Custom task') && result.messageIntentText.includes('Fallback') && result.messageIntentText.includes('Diagnose failure') && result.systemMessageText.includes('Gateway is not connected')) {
+      pass();
+    } else {
+      fail('Task intent metadata did not survive send: ' + JSON.stringify(result));
+    }
+  } catch (e) {
+    fail(e.message);
+  }
+
+  // Test 8: Lane Navigator
   currentTest = 'Lane Navigator';
   try {
     const laneNav = await page.$('.lane-navigator');
@@ -143,7 +168,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 8: Create New Lane (mock window.prompt)
+  // Test 9: Create New Lane (mock window.prompt)
   currentTest = 'Create New Lane';
   try {
     // Mock window.prompt to return a value
@@ -171,7 +196,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 9: New Session Button
+  // Test 10: New Session Button
   currentTest = 'New Session Button';
   try {
     const newSessionBtn = await page.$('#newSessionBtn');
@@ -186,7 +211,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 10: Settings Button
+  // Test 11: Settings Button
   currentTest = 'Settings Button';
   try {
     const settingsBtn = await page.$('#openSettingsBtn');
@@ -199,7 +224,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 11: Runtime Button
+  // Test 12: Runtime Button
   currentTest = 'Runtime Button';
   try {
     const runtimeBtn = await page.$('#openRuntimeBtn');
@@ -213,7 +238,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 12: Runtime Protocol Normalization
+  // Test 13: Runtime Protocol Normalization
   currentTest = 'Runtime Protocol Normalization';
   try {
     const normalized = await page.evaluate(() => {
@@ -240,7 +265,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 13: Runtime Collaboration and Performance Panels
+  // Test 14: Runtime Collaboration and Performance Panels
   currentTest = 'Runtime Collaboration and Performance Panels';
   try {
     await page.evaluate(() => document.getElementById('openRuntimeBtn')?.click());
@@ -276,7 +301,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 14: Mobile Horizontal Overflow
+  // Test 15: Mobile Horizontal Overflow
   currentTest = 'Workspace Runtime Inspector';
   try {
     await page.evaluate(() => {
@@ -323,7 +348,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 15: Mobile Horizontal Overflow
+  // Test 16: Mobile Horizontal Overflow
   currentTest = 'Mobile Horizontal Overflow';
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -343,7 +368,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 16: CSS Loading
+  // Test 17: CSS Loading
   currentTest = 'CSS Styles Loaded';
   try {
     const header = await page.$('.header');
@@ -357,7 +382,7 @@ async function runTests() {
     fail(e.message);
   }
 
-  // Test 17: Console Errors Check (excluding expected 401 from API calls)
+  // Test 18: Console Errors Check (excluding expected 401 from API calls)
   currentTest = 'No Critical Console Errors';
   const errors = [];
   page.on('console', msg => {

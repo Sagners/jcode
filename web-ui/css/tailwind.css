@@ -115,6 +115,86 @@
     overflow-wrap: anywhere;
   }
 
+  .composer-task-strip {
+    min-width: 0;
+  }
+
+  .composer-task-intent,
+  .message-task-intent {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .composer-task-intent {
+    min-height: 30px;
+    padding: var(--space-2) var(--space-3);
+    background: rgba(255, 255, 255, 0.026);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .composer-task-intent.active {
+    background: rgba(var(--accent-rgb), 0.08);
+    border-color: rgba(var(--accent-rgb), 0.26);
+  }
+
+  .composer-task-label,
+  .composer-task-route,
+  .composer-task-model,
+  .composer-task-state,
+  .message-task-intent span,
+  .message-task-intent small {
+    flex: 0 0 auto;
+    color: var(--text-tertiary);
+  }
+
+  .composer-task-intent strong,
+  .message-task-intent strong {
+    min-width: 0;
+    color: var(--text-primary);
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composer-task-route,
+  .composer-task-model,
+  .composer-task-state,
+  .message-task-intent span,
+  .message-task-intent small {
+    padding: 2px var(--space-2);
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+  }
+
+  .composer-task-intent.active .composer-task-route,
+  .message-task-intent span {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.1);
+    border-color: rgba(var(--accent-rgb), 0.25);
+  }
+
+  .composer-task-state,
+  .message-task-intent > span:last-child:not(:first-child) {
+    color: var(--warning);
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.24);
+  }
+
+  .message-task-intent {
+    flex-wrap: wrap;
+    margin: calc(var(--space-1) * -1) 0 var(--space-3);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
   .workspace-runtime-inspector {
     flex: 0 0 min(300px, 24vw);
     width: min(300px, 24vw);
@@ -433,6 +513,17 @@
     .session-starter-card {
       min-height: 132px;
       padding: var(--space-3);
+    }
+
+    .composer-task-intent {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: var(--space-1) var(--space-2);
+    }
+
+    .composer-task-intent strong {
+      flex: 1 1 160px;
+      white-space: normal;
     }
 
     .workspace-runtime-inspector {
