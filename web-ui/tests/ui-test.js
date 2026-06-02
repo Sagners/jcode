@@ -118,11 +118,21 @@ async function runTests() {
     await page.waitForTimeout(100);
     const composerValue = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-input')?.value || '');
     const taskStripText = await page.evaluate(() => document.querySelector('.surface-container[data-surface-kind="agent-session"] .composer-task-strip')?.textContent || '');
+    const starterState = await page.evaluate(() => {
+      const surface = document.querySelector('.surface-container[data-surface-kind="agent-session"]');
+      const activeCard = surface?.querySelector('.session-starter-card[data-template="plan"]');
+      return {
+        activePressed: activeCard?.getAttribute('aria-pressed') || '',
+        activeClass: Boolean(activeCard?.classList.contains('is-active')),
+        modelText: activeCard?.querySelector('.session-starter-model')?.textContent || '',
+        expectedModel: ModelRoutingStore.modelLabel(ModelRoutingStore.snapshot().planningModel, true)
+      };
+    });
     const starterLabels = await page.$$eval('.session-starter-card strong', labels => labels.map(label => label.textContent.trim()).join('|'));
-    if (starterCount >= 4 && composerValue.includes('Plan this change before editing') && taskStripText.includes('Plan task') && taskStripText.includes('Planning') && starterLabels.includes('Execute change') && starterLabels.includes('Diagnose failure')) {
+    if (starterCount >= 4 && composerValue.includes('Plan this change before editing') && taskStripText.includes('Plan task') && taskStripText.includes('Planning') && starterState.activePressed === 'true' && starterState.activeClass && starterState.modelText.includes('Model') && starterState.modelText.includes(starterState.expectedModel) && starterLabels.includes('Execute change') && starterLabels.includes('Diagnose failure')) {
       pass();
     } else {
-      fail('Starter templates did not render or fill the composer');
+      fail('Starter templates did not render, select, or fill the composer: ' + JSON.stringify(starterState));
     }
   } catch (e) {
     fail(e.message);

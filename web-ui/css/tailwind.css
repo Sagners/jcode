@@ -58,11 +58,11 @@
 
   .session-starter-card {
     display: grid;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto 1fr auto;
     align-items: start;
     gap: var(--space-2);
     min-width: 0;
-    min-height: 144px;
+    min-height: 164px;
     padding: var(--space-4);
     text-align: left;
     color: var(--text-secondary);
@@ -72,6 +72,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     cursor: pointer;
+    position: relative;
     transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
   }
 
@@ -84,6 +85,15 @@
     border-color: rgba(var(--accent-rgb), 0.42);
     outline: none;
     transform: translateY(-1px);
+  }
+
+  .session-starter-card.is-active {
+    color: var(--text-primary);
+    background:
+      linear-gradient(180deg, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0.035)),
+      rgba(0, 0, 0, 0.16);
+    border-color: rgba(var(--accent-rgb), 0.52);
+    box-shadow: inset 3px 0 0 rgba(var(--accent-rgb), 0.72);
   }
 
   .session-starter-route {
@@ -113,6 +123,33 @@
     font-size: var(--text-xs);
     line-height: 1.45;
     overflow-wrap: anywhere;
+  }
+
+  .session-starter-model {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
+    width: 100%;
+    padding-top: var(--space-2);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .session-starter-model strong {
+    min-width: 0;
+    color: var(--text-secondary);
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .session-starter-card.is-active .session-starter-model strong {
+    color: var(--accent);
   }
 
   .composer-task-strip {
@@ -511,7 +548,7 @@
     }
 
     .session-starter-card {
-      min-height: 132px;
+      min-height: 152px;
       padding: var(--space-3);
     }
 

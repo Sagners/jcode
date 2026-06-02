@@ -98,7 +98,7 @@ Return:
     const messagesId = `messages_${surface.id}`;
     container.innerHTML = `
       <div class="session-messages" id="${messagesId}">
-        ${this.renderEmptyState()}
+        ${this.renderEmptyState(surface.id)}
       </div>
       <div class="session-connection-banner" id="connectionBanner_${surface.id}" hidden>
         <span class="status-dot disconnected"></span>
@@ -206,6 +206,7 @@ Return:
       if (taskStrip) {
         taskStrip.innerHTML = this.renderTaskIntent(surface.id, state);
       }
+      this.syncStarterSelection(surface.id, container, state);
     };
     const unsubscribe = ModelRoutingStore.subscribe(render);
     routePlan.addEventListener('click', event => {
@@ -226,7 +227,7 @@ Return:
     };
   },
 
-  renderEmptyState() {
+  renderEmptyState(surfaceId) {
     return `
       <div class="empty-state session-empty-state">
         <div class="session-empty-workbench">
@@ -241,13 +242,7 @@ Return:
             </div>
           </div>
           <div class="session-starter-grid" aria-label="Starter task intents">
-            ${this.starterPrompts.map(prompt => `
-              <button type="button" class="session-starter-card" data-action="starter-template" data-template="${this.escapeHtml(prompt.key)}">
-                <span class="session-starter-route">${this.escapeHtml(prompt.route)}</span>
-                <strong>${this.escapeHtml(prompt.title)}</strong>
-                <small>${this.escapeHtml(prompt.summary)}</small>
-              </button>
-            `).join('')}
+            ${this.renderStarterCards(surfaceId)}
           </div>
           <div class="session-empty-actions" aria-label="Session setup actions">
             <button type="button" class="session-empty-action" data-action="connection">Connection</button>
@@ -282,6 +277,46 @@ Return:
     if (taskStrip) {
       taskStrip.innerHTML = this.renderTaskIntent(surfaceId);
     }
+    this.syncStarterSelection(surfaceId, container);
+  },
+
+  renderStarterCards(surfaceId, routing = null) {
+    const activeKey = this.activeIntents.get(surfaceId)?.key || null;
+    return this.starterPrompts.map(prompt => this.renderStarterCard(prompt, activeKey, routing)).join('');
+  },
+
+  renderStarterCard(prompt, activeKey = null, routing = null) {
+    const selected = prompt.key === activeKey;
+    const route = this.getIntentRoute(prompt, routing);
+    return `
+      <button type="button" class="session-starter-card${selected ? ' is-active' : ''}" data-action="starter-template" data-template="${this.escapeHtml(prompt.key)}" aria-pressed="${selected ? 'true' : 'false'}">
+        <span class="session-starter-route">${this.escapeHtml(prompt.route)}</span>
+        <strong>${this.escapeHtml(prompt.title)}</strong>
+        <small>${this.escapeHtml(prompt.summary)}</small>
+        <span class="session-starter-model">
+          <span>Model</span>
+          <strong>${this.escapeHtml(route.model)}</strong>
+        </span>
+      </button>
+    `;
+  },
+
+  syncStarterSelection(surfaceId, container = null, routing = null) {
+    const root = container
+      || Array.from(document.querySelectorAll('[data-surface-id]')).find(node => node.dataset.surfaceId === String(surfaceId));
+    if (!root) return;
+    const activeKey = this.activeIntents.get(surfaceId)?.key || null;
+    root.querySelectorAll('.session-starter-card[data-template]').forEach(card => {
+      const selected = card.dataset.template === activeKey;
+      card.classList.toggle('is-active', selected);
+      card.setAttribute('aria-pressed', selected ? 'true' : 'false');
+
+      const prompt = this.starterPrompts.find(item => item.key === card.dataset.template);
+      const modelLabel = card.querySelector('.session-starter-model strong');
+      if (prompt && modelLabel) {
+        modelLabel.textContent = this.getIntentRoute(prompt, routing).model;
+      }
+    });
   },
 
   getIntentRoute(intent, routing = null) {

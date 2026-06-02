@@ -157,15 +157,19 @@ async function runTests() {
       return {
         composerValue: surface?.querySelector('.composer-input')?.value || '',
         taskStripText: surface?.querySelector('.composer-task-strip')?.textContent || '',
+        activePressed: surface?.querySelector('.session-starter-card[data-template="review"]')?.getAttribute('aria-pressed') || '',
+        activeClass: Boolean(surface?.querySelector('.session-starter-card[data-template="review"]')?.classList.contains('is-active')),
+        activeModelText: surface?.querySelector('.session-starter-card[data-template="review"] .session-starter-model')?.textContent || '',
+        expectedModel: ModelRoutingStore.modelLabel(ModelRoutingStore.snapshot().reviewModel, true),
         starterCount: surface?.querySelectorAll('.session-starter-card').length || 0,
         setupActionCount: surface?.querySelectorAll('.session-empty-action').length || 0
       };
     });
     const routeText = await page.textContent('.surface-container[data-surface-kind="agent-session"] .composer-route-plan');
-    if (starterResult.composerValue.includes('Review the current implementation') && starterResult.taskStripText.includes('Review result') && starterResult.taskStripText.includes('Review') && routeText.includes('Route') && routeText.includes('Exec') && starterResult.starterCount >= 4 && starterResult.setupActionCount >= 2) {
+    if (starterResult.composerValue.includes('Review the current implementation') && starterResult.taskStripText.includes('Review result') && starterResult.taskStripText.includes('Review') && starterResult.activePressed === 'true' && starterResult.activeClass && starterResult.activeModelText.includes('Model') && starterResult.activeModelText.includes(starterResult.expectedModel) && routeText.includes('Route') && routeText.includes('Exec') && starterResult.starterCount >= 4 && starterResult.setupActionCount >= 2) {
       pass('Session Empty Actions', `Starters: ${starterResult.starterCount}, setup actions: ${starterResult.setupActionCount}`);
     } else {
-      fail('Session Empty Actions', `Composer value: ${starterResult.composerValue || 'empty'}, task strip: ${starterResult.taskStripText || 'empty'}, route: ${routeText || 'empty'}, starters: ${starterResult.starterCount}, setup actions: ${starterResult.setupActionCount}`);
+      fail('Session Empty Actions', `Composer value: ${starterResult.composerValue || 'empty'}, task strip: ${starterResult.taskStripText || 'empty'}, active: ${starterResult.activePressed}/${starterResult.activeClass}, model: ${starterResult.activeModelText || 'empty'}, route: ${routeText || 'empty'}, starters: ${starterResult.starterCount}, setup actions: ${starterResult.setupActionCount}`);
     }
   } catch (e) {
     fail('Session Empty Actions', e.message);
